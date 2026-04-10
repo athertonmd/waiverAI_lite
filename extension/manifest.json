@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Waiver Hub Capture",
+  "version": "1.0.0",
+  "description": "Capture airline waiver pages from your authenticated browser session and submit to Waiver Data Hub.",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["https://1xwh2q6cxd.execute-api.eu-west-2.amazonaws.com/*"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

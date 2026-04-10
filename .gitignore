@@ -1,0 +1,14 @@
+node_modules
+dist
+ui/dist
+infra/cdk.out
+*.js.map
+*.d.ts
+
+# Environment files with secrets
+ui/.env
+ui/.env.local
+ui/.env.production
+
+# OS files
+.DS_Store

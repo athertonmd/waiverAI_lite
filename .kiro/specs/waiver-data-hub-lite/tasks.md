@@ -1,0 +1,103 @@
+# Implementation Tasks
+
+## Phase 1: Foundation
+
+- [x] 1.1 Initialize monorepo with infra, lambdas, ui, shared directories
+- [x] 1.2 Set up CDK project with base stack (VPC, S3, SNS)
+- [x] 1.3 Create Aurora PostgreSQL cluster and apply database schema
+- [x] 1.4 Configure Cognito User Pool with PKCE flow
+- [x] 1.5 Set up API Gateway REST API with Cognito authorizer
+- [x] 2.1 Configure SES receipt rule for email ingestion
+- [x] 2.2 Implement SES Action Lambda for MIME parsing
+- [x] 2.3 Configure email retry logic and SNS notifications
+- [x] 2.4 Write unit tests for email ingestion
+- [x] 3.1 Implement Presigned URL Generator Lambda
+- [x] 3.2 Expose upload endpoint via API Gateway
+- [x] 3.3 Write unit tests for PDF upload
+- [x] 4.1 Implement Web URL Fetcher Lambda
+- [x] 4.2 Expose web-url endpoint via API Gateway
+- [x] 4.3 Create monitor_schedules table
+- [x] 4.4 Implement EventBridge Scheduler integration
+- [x] 4.5 Implement SHA-256 change detection
+- [x] 4.6 Store fetched versions in web_content_versions
+- [x] 4.7 Implement schedule lifecycle management
+- [x] 4.8 Expose monitoring management endpoints
+- [x] 4.9 Write unit tests for web monitoring
+- [x] 5.1 Implement Normalisation Lambda
+- [x] 5.2 Store normalized output to S3
+- [x] 5.3 Implement normalisation error handling
+- [x] 5.4 Write unit tests for normalisation
+- [x] 6.1 Implement Extraction Lambda with Bedrock
+- [x] 6.2 Implement Confidence Scorer
+- [x] 6.3 Store extracted records to S3
+- [x] 6.4 Implement extraction error handling
+- [x] 6.5 Write property-based test for round-trip serialization
+- [x] 6.6 Write unit tests for extraction
+- [x] 7.1 Define Step Functions state machine
+- [x] 7.2 Configure S3 event trigger
+- [x] 7.3 Implement stage tracking
+- [x] 7.4 Configure retry policies
+- [x] 7.5 Implement pipeline failure handling
+- [x] 7.6 Implement confidence threshold routing
+- [x] 8.1 Implement Storage Lambda
+- [x] 8.2 Implement waiver versioning
+- [x] 8.3 Enforce unique constraint
+- [x] 8.4 Write unit tests for storage
+- [x] 9.1 Implement GET /v1/waivers with pagination
+- [x] 9.2 Implement GET /v1/waivers/{id}
+- [x] 9.3 Implement GET /v1/waivers/active
+- [x] 9.4 Implement GET /v1/waivers/search
+- [x] 9.5 Implement POST /v1/waivers/{id}/approve
+- [x] 9.6 Implement POST /v1/waivers/{id}/reject
+- [x] 9.7 Implement PUT /v1/waivers/{id}/draft
+- [x] 9.8 Implement GET /v1/dashboard/metrics
+- [x] 9.9 Configure RBAC enforcement
+- [x] 9.10 Enable API Gateway access logging
+- [x] 9.11 Write integration tests for API
+- [x] 10.1 Initialize React app with Vite and TypeScript
+- [x] 10.2 Implement Cognito authentication flow
+- [x] 10.3 Implement global layout
+- [x] 10.4 Apply design system styles
+- [x] 10.5 Set up React Router and React Query
+- [x] 11.1 Implement Dashboard KPI cards
+- [x] 11.2 Implement Dashboard charts
+- [x] 11.3 Implement recent waivers table
+- [x] 11.4 Implement 60-second auto-refresh
+- [x] 11.5 Connect Dashboard to metrics API
+- [x] 12.1 Implement Waiver List paginated table
+- [x] 12.2 Implement Waiver List search bar
+- [x] 12.3 Implement Waiver List filter dropdowns
+- [x] 12.4 Implement Waiver List row navigation
+- [x] 12.5 Display total count and page number
+- [x] 13.1 Implement Review Queue table
+- [x] 13.2 Implement confidence badges
+- [x] 13.3 Implement Review Queue filters
+- [x] 13.4 Implement bulk approve and reject
+- [x] 13.5 Implement Review Queue row navigation
+- [x] 14.1 Implement split-screen layout
+- [x] 14.2 Implement source document viewer
+- [x] 14.3 Implement editable form with confidence indicators
+- [x] 14.4 Implement modified field highlighting
+- [x] 14.5 Implement form validation
+- [x] 14.6 Implement Approve action
+- [x] 14.7 Implement Reject action
+- [x] 14.8 Implement Save Draft action
+- [x] 14.9 Implement error handling for API failures
+- [x] 15.1 Implement monitoring schedules table
+- [x] 15.2 Implement schedule edit form
+- [x] 15.3 Implement pause and terminate actions
+- [x] 15.4 Display version history and change log
+- [x] 16.1 Implement post-extraction field comparison
+- [x] 16.2 Flag material changes as High Impact
+- [x] 16.3 Boost High Impact items in Review Queue
+- [x] 16.4 Write unit tests for high-impact detection
+
+## Phase 2: Confidence Tuning
+- [x]* 17. Integrate AWS A2I
+- [x]* 18. Implement confidence threshold tuning UI
+- [x]* 19. Implement waiver version comparison view
+
+## Phase 3: Webhooks and Optimisation
+- [ ]* 20. Implement webhook notifications
+- [ ]* 21. Add caching layer
+- [ ]* 22. Performance optimisation

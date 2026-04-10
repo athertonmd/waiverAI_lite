@@ -1,0 +1,17 @@
+{
+  "name": "@waiver-data-hub/infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\"",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.175.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.0"
+  }
+}
