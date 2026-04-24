@@ -403,9 +403,6 @@ async function approveWaiver(id: string, event: APIGatewayProxyEvent): Promise<A
   cache.invalidate('waivers:active');
   cache.invalidate('dashboard:metrics');
 
-  // Record corrections for few-shot learning if the reviewer changed any fields
-  recordCorrections(existing.Item, id).catch((err) => console.error('Failed to record corrections:', err));
-
   // Fire-and-forget webhook
   dispatchWebhook('waiver.approved', { id, status: 'active' }).catch(() => {});
 
@@ -472,6 +469,14 @@ async function saveDraft(id: string, event: APIGatewayProxyEvent): Promise<APIGa
     // ignore parse errors
   }
 
+  // Validate release_notes length
+  if (body.release_notes !== undefined) {
+    const notes = String(body.release_notes);
+    if (notes.length > 500) {
+      return errorResponse('VALIDATION_ERROR', 'release_notes must not exceed 500 characters', 400);
+    }
+  }
+
   // Fetch schema dynamically to determine editable fields
   let editable: string[];
   try {
@@ -516,6 +521,39 @@ async function saveDraft(id: string, event: APIGatewayProxyEvent): Promise<APIGa
     ExpressionAttributeValues: exprValues,
     ExpressionAttributeNames: exprNames,
   }));
+
+  // Record corrections by comparing draft edits against the original AI extraction snapshot.
+  // This enables few-shot learning: the extraction prompt can include past corrections as examples.
+  const aiExtraction = (existing.Item.ai_extraction as Record<string, string>) ?? {};
+  if (Object.keys(aiExtraction).length > 0 && TableNames.corrections) {
+    const correctedFields: Record<string, { ai: string; human: string }> = {};
+    const checkFields = DEFAULT_SCHEMA.map(f => f.key);
+
+    for (const field of checkFields) {
+      if (body[field] !== undefined) {
+        const aiVal = String(aiExtraction[field] ?? '');
+        const humanVal = String(body[field] ?? '');
+        if (aiVal !== humanVal && humanVal.trim()) {
+          correctedFields[field] = { ai: aiVal, human: humanVal };
+        }
+      }
+    }
+
+    if (Object.keys(correctedFields).length > 0) {
+      const correctionId = `corr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      docClient.send(new PutCommand({
+        TableName: TableNames.corrections,
+        Item: {
+          id: correctionId,
+          waiver_id: id,
+          source_type: String(existing.Item.source_type ?? 'unknown'),
+          airline_code: String(existing.Item.airline_code ?? ''),
+          corrections: correctedFields,
+          created_at: new Date().toISOString(),
+        },
+      })).catch((err) => console.error('Failed to record corrections:', err));
+    }
+  }
 
   return json(200, { data: { id, message: 'Draft saved' } });
 }
@@ -580,8 +618,7 @@ async function recordCorrections(originalItem: Record<string, unknown>, waiverId
   if (!current.Item) return;
 
   const correctedFields: Record<string, { ai: string; human: string }> = {};
-  const checkFields = ['airline_code', 'waiver_title', 'waiver_code', 'effective_date', 'expiration_date',
-    'applicable_routes', 'fare_classes', 'rebooking_rules', 'refund_rules'];
+  const checkFields = DEFAULT_SCHEMA.map(f => f.key);
 
   for (const field of checkFields) {
     const aiVal = String(originalItem[field] ?? '');
@@ -861,7 +898,6 @@ async function getWaiverSource(waiverId: string): Promise<APIGatewayProxyResult>
   let screenshotUrl = '';
   if (resolvedScreenshotKey && INGESTION_BUCKET) {
     try {
-      // Verify the screenshot exists before generating a presigned URL
       await s3.send(new HeadObjectCommand({ Bucket: INGESTION_BUCKET, Key: resolvedScreenshotKey }));
       screenshotUrl = await getSignedUrl(
         s3,
@@ -869,7 +905,21 @@ async function getWaiverSource(waiverId: string): Promise<APIGatewayProxyResult>
         { expiresIn: 300 },
       );
     } catch {
-      // Screenshot doesn't exist — that's fine (e.g. fallback fetch was used)
+      // Try .jpg fallback (browser-capture saves as .jpg)
+      if (resolvedScreenshotKey.endsWith('.png')) {
+        const jpgKey = resolvedScreenshotKey.replace(/\.png$/, '.jpg');
+        try {
+          await s3.send(new HeadObjectCommand({ Bucket: INGESTION_BUCKET, Key: jpgKey }));
+          resolvedScreenshotKey = jpgKey;
+          screenshotUrl = await getSignedUrl(
+            s3,
+            new GetObjectCommand({ Bucket: INGESTION_BUCKET, Key: jpgKey }),
+            { expiresIn: 300 },
+          );
+        } catch {
+          // No screenshot available
+        }
+      }
     }
   }
 

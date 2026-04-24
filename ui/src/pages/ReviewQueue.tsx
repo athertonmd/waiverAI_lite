@@ -52,8 +52,9 @@ export function ReviewQueue() {
     queryFn: () => apiGet<FieldSchemaResponse>('/v1/settings/extraction-fields'),
   });
   const schema = schemaData?.data ? [...schemaData.data].sort((a, b) => a.order - b.order) : [];
-  // Show required fields as columns in the review queue
-  const visibleFields = schema.filter((f) => f.required);
+  // Show only key triage columns in the review queue (not all required fields)
+  const REVIEW_QUEUE_KEYS = new Set(['airline_code', 'waiver_title', 'waiver_code', 'effective_date', 'expiration_date']);
+  const visibleFields = schema.filter((f) => REVIEW_QUEUE_KEYS.has(f.key));
 
   /* Filters */
   const [airlineFilter, setAirlineFilter] = useState('');
@@ -144,7 +145,12 @@ export function ReviewQueue() {
     const raw = waiver[field.key];
     if (raw == null) return '';
     if (Array.isArray(raw)) return raw.join(', ');
-    return String(raw);
+    const str = String(raw);
+    // Truncate long textarea fields in the table view
+    if (field.type === 'textarea' && str.length > 60) {
+      return str.slice(0, 60) + '…';
+    }
+    return str;
   };
 
   return (

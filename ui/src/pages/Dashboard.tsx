@@ -69,9 +69,12 @@ export function Dashboard() {
 
       {/* KPI Cards */}
       <div style={S.kpiGrid}>
-        <KpiCard label="Active Waivers" value={m.activeWaivers} />
-        <KpiCard label="Processed Today" value={m.processedToday} />
-        <KpiCard label="Pending Review" value={m.pendingReview} />
+        <KpiCard label="Active Waivers" value={m.activeWaivers} onClick={() => navigate('/waivers?status=active')} />
+        <KpiCard label="Processed Today" value={m.processedToday} onClick={() => {
+          const today = new Date().toISOString().split('T')[0];
+          navigate(`/waivers?dateFrom=${today}&dateTo=${today}`);
+        }} />
+        <KpiCard label="Pending Review" value={m.pendingReview} onClick={() => navigate('/review')} />
         <KpiCard label="Avg Confidence" value={`${(m.averageConfidence * 100).toFixed(1)}%`} />
       </div>
 
@@ -128,9 +131,9 @@ export function Dashboard() {
 
 /* ── Sub-components ────────────────────────────────── */
 
-function KpiCard({ label, value }: { label: string; value: string | number }) {
+function KpiCard({ label, value, onClick }: { label: string; value: string | number; onClick?: () => void }) {
   return (
-    <div className="card" style={S.kpiCard}>
+    <div className="card" style={{ ...S.kpiCard, cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
       <div style={S.kpiLabel}>{label}</div>
       <div style={S.kpiValue}>{value}</div>
     </div>

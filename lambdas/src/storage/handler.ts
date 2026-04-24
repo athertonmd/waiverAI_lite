@@ -3,6 +3,7 @@ import { docClient, TableNames } from '../shared/db';
 import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { dispatchWebhook } from '../webhooks/dispatcher';
 import { checkForDuplicate } from './duplicate-detector';
+import { DEFAULT_SCHEMA } from '../shared/field-schema';
 
 const s3 = new S3Client({});
 const BUCKET = process.env.INGESTION_BUCKET!;
@@ -82,32 +83,49 @@ export async function upsertWaiver(
   const now = new Date().toISOString();
   const item: Record<string, unknown> = {
     id: existing?.existingId ?? record.id,
-    airline_code: record.airline_code,
-    waiver_title: record.waiver_title,
-    waiver_code: record.waiver_code,
-    effective_date: record.effective_date,
-    expiration_date: record.expiration_date,
-    applicable_routes: record.applicable_routes,
-    fare_classes: record.fare_classes,
-    rebooking_rules: record.rebooking_rules,
-    refund_rules: record.refund_rules,
-    confidence_scores: record.confidence_scores,
-    overall_confidence: record.overall_confidence,
-    status,
-    source_type: record.source_type,
-    source_s3_key: record.source_s3_key,
-    normalized_s3_key: record.normalized_s3_key,
-    ingestion_timestamp: record.ingestion_timestamp,
-    extraction_timestamp: record.extraction_timestamp,
-    version_number: existing ? existing.existingVersionNumber + 1 : (record.version_number ?? 1),
-    created_at: existing ? undefined : now,
-    updated_at: now,
   };
+
+  // Schema-driven field persistence
+  for (const field of DEFAULT_SCHEMA) {
+    if (record[field.key] !== undefined) {
+      item[field.key] = record[field.key];
+    }
+  }
+
+  // Backward compat: map applicable_routes → airports
+  if (!item.airports && record.applicable_routes) {
+    item.airports = record.applicable_routes;
+  }
+
+  // System fields
+  item.confidence_scores = record.confidence_scores;
+  item.overall_confidence = record.overall_confidence;
+  item.status = status;
+  item.source_type = record.source_type;
+  item.source_s3_key = record.source_s3_key;
+  item.normalized_s3_key = record.normalized_s3_key;
+  item.ingestion_timestamp = record.ingestion_timestamp;
+  item.extraction_timestamp = record.extraction_timestamp;
+  item.version_number = existing ? existing.existingVersionNumber + 1 : (record.version_number ?? 1);
+  item.created_at = existing ? undefined : now;
+  item.updated_at = now;
 
   // Remove undefined values
   for (const key of Object.keys(item)) {
     if (item[key] === undefined) delete item[key];
   }
+
+  // Store a snapshot of the original AI extraction for few-shot learning.
+  // When a reviewer edits fields and saves a draft, the saveDraft handler
+  // compares the edited values against this snapshot to record corrections.
+  const checkFields = DEFAULT_SCHEMA.map(f => f.key);
+  const aiExtraction: Record<string, unknown> = {};
+  for (const field of checkFields) {
+    if (item[field] !== undefined) {
+      aiExtraction[field] = item[field];
+    }
+  }
+  item.ai_extraction = aiExtraction;
 
   await docClient.send(new PutCommand({
     TableName: TableNames.waivers,
@@ -134,35 +152,50 @@ export async function handler(event: StoreEvent): Promise<StoreResult> {
   const now = new Date().toISOString();
   const item: Record<string, unknown> = {
     id: recordId,
-    airline_code: record.airline_code,
-    waiver_title: record.waiver_title,
-    waiver_code: record.waiver_code,
-    effective_date: record.effective_date,
-    expiration_date: record.expiration_date,
-    applicable_routes: record.applicable_routes,
-    fare_classes: record.fare_classes,
-    rebooking_rules: record.rebooking_rules,
-    refund_rules: record.refund_rules,
-    confidence_scores: record.confidence_scores,
-    overall_confidence: record.overall_confidence,
-    status,
-    source_type: record.source_type,
-    source_s3_key: record.source_s3_key,
-    source_url: record.source_url ?? '',
-    normalized_s3_key: record.normalized_s3_key,
-    ingestion_timestamp: record.ingestion_timestamp,
-    extraction_timestamp: record.extraction_timestamp,
-    version_number: 1,
-    is_duplicate: duplicateResult.isDuplicate,
-    duplicate_of_id: duplicateResult.duplicateOfId,
-    created_at: now,
-    updated_at: now,
   };
+
+  // Schema-driven field persistence
+  for (const field of DEFAULT_SCHEMA) {
+    if (record[field.key] !== undefined) {
+      item[field.key] = record[field.key];
+    }
+  }
+
+  // Backward compat: map applicable_routes → airports
+  if (!item.airports && record.applicable_routes) {
+    item.airports = record.applicable_routes;
+  }
+
+  // System fields
+  item.confidence_scores = record.confidence_scores;
+  item.overall_confidence = record.overall_confidence;
+  item.status = status;
+  item.source_type = record.source_type;
+  item.source_s3_key = record.source_s3_key;
+  item.source_url = record.source_url ?? '';
+  item.normalized_s3_key = record.normalized_s3_key;
+  item.ingestion_timestamp = record.ingestion_timestamp;
+  item.extraction_timestamp = record.extraction_timestamp;
+  item.version_number = 1;
+  item.is_duplicate = duplicateResult.isDuplicate;
+  item.duplicate_of_id = duplicateResult.duplicateOfId;
+  item.created_at = now;
+  item.updated_at = now;
 
   // Remove undefined values
   for (const key of Object.keys(item)) {
     if (item[key] === undefined) delete item[key];
   }
+
+  // Store a snapshot of the original AI extraction for few-shot learning.
+  const aiCheckFields = DEFAULT_SCHEMA.map(f => f.key);
+  const aiExtraction: Record<string, unknown> = {};
+  for (const field of aiCheckFields) {
+    if (item[field] !== undefined) {
+      aiExtraction[field] = item[field];
+    }
+  }
+  item.ai_extraction = aiExtraction;
 
   await docClient.send(new PutCommand({
     TableName: TableNames.waivers,

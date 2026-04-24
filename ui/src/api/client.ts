@@ -1,4 +1,4 @@
-import { getIdToken } from '../auth/pkce';
+import { getIdToken, logout } from '../auth/pkce';
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '';
 
@@ -8,6 +8,13 @@ function getAuthHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${token}` };
   }
   return {};
+}
+
+/** If the API returns 401 or 403, the session is invalid — log out immediately. */
+function handleAuthError(res: Response): void {
+  if (res.status === 401 || res.status === 403) {
+    logout();
+  }
 }
 
 export async function apiGet<T>(path: string, params?: Record<string, string>): Promise<T> {
@@ -20,6 +27,7 @@ export async function apiGet<T>(path: string, params?: Record<string, string>): 
   const headers = getAuthHeaders();
   const res = await fetch(url.toString(), { headers });
   if (!res.ok) {
+    handleAuthError(res);
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.error?.message ?? `Request failed: ${res.status}`);
   }
@@ -37,6 +45,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
+    handleAuthError(res);
     const data = await res.json().catch(() => ({}));
     throw new Error(data?.error?.message ?? `Request failed: ${res.status}`);
   }
@@ -54,6 +63,7 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
+    handleAuthError(res);
     const data = await res.json().catch(() => ({}));
     throw new Error(data?.error?.message ?? `Request failed: ${res.status}`);
   }
@@ -64,6 +74,7 @@ export async function apiDelete<T>(path: string): Promise<T> {
   const headers = getAuthHeaders();
   const res = await fetch(`${BASE_URL}${path}`, { method: 'DELETE', headers });
   if (!res.ok) {
+    handleAuthError(res);
     const data = await res.json().catch(() => ({}));
     throw new Error(data?.error?.message ?? `Request failed: ${res.status}`);
   }

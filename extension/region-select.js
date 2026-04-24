@@ -1,7 +1,5 @@
-// Region selection overlay — injected into the page when user clicks "Select Region"
-// Draws a rectangle overlay and captures all text elements within the selected area.
+// Region selection overlay — draws a rectangle and captures text within it.
 (() => {
-  // Remove any existing overlay
   const existing = document.getElementById('waiverhub-region-overlay');
   if (existing) existing.remove();
 
@@ -10,13 +8,13 @@
     overlay.id = 'waiverhub-region-overlay';
     Object.assign(overlay.style, {
       position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
-      zIndex: '2147483647', cursor: 'crosshair', background: 'rgba(0,0,0,0.1)',
+      zIndex: '2147483647', cursor: 'crosshair', background: 'rgba(0,0,0,0.05)',
     });
 
     const box = document.createElement('div');
     Object.assign(box.style, {
-      position: 'fixed', border: '2px solid #0066cc', background: 'rgba(0,102,204,0.08)',
-      pointerEvents: 'none', display: 'none',
+      position: 'fixed', border: '2px dashed #0066cc', background: 'rgba(0,102,204,0.06)',
+      pointerEvents: 'none', display: 'none', borderRadius: '4px',
     });
     overlay.appendChild(box);
 
@@ -25,9 +23,9 @@
       position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)',
       background: '#0066cc', color: '#fff', padding: '8px 16px', borderRadius: '6px',
       fontSize: '14px', fontWeight: '600', fontFamily: 'system-ui, sans-serif',
-      zIndex: '2147483647', pointerEvents: 'none',
+      pointerEvents: 'none',
     });
-    label.textContent = 'Draw a rectangle around the waiver content. Press Esc to cancel.';
+    label.textContent = 'Draw a rectangle around the waiver. Press Esc to cancel.';
     overlay.appendChild(label);
 
     let startX = 0, startY = 0, drawing = false;
@@ -35,21 +33,20 @@
     overlay.addEventListener('mousedown', (e) => {
       startX = e.clientX; startY = e.clientY; drawing = true;
       box.style.display = 'block';
-      box.style.left = startX + 'px'; box.style.top = startY + 'px';
-      box.style.width = '0'; box.style.height = '0';
     });
 
     overlay.addEventListener('mousemove', (e) => {
       if (!drawing) return;
       const x = Math.min(e.clientX, startX), y = Math.min(e.clientY, startY);
-      const w = Math.abs(e.clientX - startX), h = Math.abs(e.clientY - startY);
       box.style.left = x + 'px'; box.style.top = y + 'px';
-      box.style.width = w + 'px'; box.style.height = h + 'px';
+      box.style.width = Math.abs(e.clientX - startX) + 'px';
+      box.style.height = Math.abs(e.clientY - startY) + 'px';
     });
 
     overlay.addEventListener('mouseup', (e) => {
       if (!drawing) return;
       drawing = false;
+      overlay.remove();
 
       const rect = {
         left: Math.min(e.clientX, startX),
@@ -58,59 +55,56 @@
         bottom: Math.max(e.clientY, startY),
       };
 
-      // Remove overlay before capturing
-      overlay.remove();
-
-      // Too small — treat as a click, not a drag
       if (rect.right - rect.left < 20 || rect.bottom - rect.top < 20) {
         resolve({ text: '', html: '', mode: 'region', region: null });
         return;
       }
 
-      // Find all text nodes/elements within the rectangle
-      const textParts = [];
-      const htmlParts = [];
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
-      let node;
+      // Simple approach: get all elements, check overlap, collect text
+      const allEls = document.body.querySelectorAll('*');
+      const parts = [];
 
-      while ((node = walker.nextNode())) {
-        const el = node;
-        const elRect = el.getBoundingClientRect();
+      for (const el of allEls) {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) continue;
+        // Must overlap with selection
+        if (r.right < rect.left || r.left > rect.right) continue;
+        if (r.bottom < rect.top || r.top > rect.bottom) continue;
 
-        // Check if element overlaps with the selection rectangle
-        if (elRect.right < rect.left || elRect.left > rect.right ||
-            elRect.bottom < rect.top || elRect.top > rect.bottom) continue;
-        if (elRect.width === 0 || elRect.height === 0) continue;
-
-        const text = el.innerText?.trim();
-        if (text && text.length > 0 && !el.querySelector('*[innerText]')) {
-          // Leaf-ish element with text
-          textParts.push(text);
-          htmlParts.push(el.outerHTML);
+        // Collect direct text nodes only (avoids duplication from parent elements)
+        let directText = '';
+        for (const child of el.childNodes) {
+          if (child.nodeType === 3) directText += child.textContent;
+        }
+        directText = directText.trim();
+        if (directText.length > 0) {
+          parts.push({ text: directText, top: r.top });
         }
       }
 
-      // Deduplicate (parent elements may include child text)
-      const uniqueText = [...new Set(textParts)].join('\n');
-
-      resolve({
-        text: uniqueText,
-        html: htmlParts.join('\n'),
-        mode: 'region',
-        region: rect,
+      // Sort top to bottom, deduplicate
+      parts.sort((a, b) => a.top - b.top);
+      const seen = new Set();
+      const unique = parts.filter(p => {
+        if (seen.has(p.text)) return false;
+        seen.add(p.text);
+        return true;
       });
+
+      const text = unique.map(p => p.text).join('\n');
+      const html = '<div>' + unique.map(p => '<p>' + p.text + '</p>').join('') + '</div>';
+
+      resolve({ text, html, mode: 'region', region: rect });
     });
 
-    // Esc to cancel
-    const onKeyDown = (e) => {
+    const onKey = (e) => {
       if (e.key === 'Escape') {
         overlay.remove();
-        document.removeEventListener('keydown', onKeyDown);
+        document.removeEventListener('keydown', onKey);
         resolve({ text: '', html: '', mode: 'cancelled', region: null });
       }
     };
-    document.addEventListener('keydown', onKeyDown);
-
+    document.addEventListener('keydown', onKey);
     document.body.appendChild(overlay);
   });
 })();

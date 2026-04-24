@@ -156,7 +156,11 @@ export function WaiverDetail() {
     if (waiver && schema.length > 0 && !form) {
       const f: Record<string, string> = {};
       for (const field of schema) {
-        const raw = waiver[field.key];
+        let raw = waiver[field.key];
+        // Backward compat: if schema has 'airports' but record only has 'applicable_routes'
+        if (field.key === 'airports' && raw == null && waiver.applicable_routes != null) {
+          raw = waiver.applicable_routes;
+        }
         if (field.type === 'array' && Array.isArray(raw)) {
           f[field.key] = raw.join(', ');
         } else {
@@ -389,15 +393,23 @@ export function WaiverDetail() {
                     {confidence !== undefined && <FieldConfidenceBadge value={confidence} />}
                   </div>
                   {useTextArea ? (
-                    <textarea
-                      value={fieldValue}
-                      onChange={(e) => setField(key, e.target.value)}
-                      style={{ ...S.textarea, ...(fieldColor ? { borderColor: fieldColor, borderWidth: 2, background: `${fieldColor}15` } : {}) }}
-                      rows={isArray ? 2 : 3}
-                      aria-label={fieldDef.label}
-                      readOnly={!isAdmin}
-                      disabled={!isAdmin}
-                    />
+                    <>
+                      <textarea
+                        value={fieldValue}
+                        onChange={(e) => setField(key, e.target.value)}
+                        style={{ ...S.textarea, ...(fieldColor ? { borderColor: fieldColor, borderWidth: 2, background: `${fieldColor}15` } : {}) }}
+                        rows={isArray ? 2 : 3}
+                        aria-label={fieldDef.label}
+                        readOnly={!isAdmin}
+                        disabled={!isAdmin}
+                        {...(key === 'release_notes' ? { maxLength: 500 } : {})}
+                      />
+                      {key === 'release_notes' && (
+                        <div style={{ fontSize: 11, color: fieldValue.length > 480 ? 'var(--color-red)' : 'var(--color-text-secondary)', textAlign: 'right', marginTop: 2 }}>
+                          {fieldValue.length}/500
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <input
                       type={isDate ? 'date' : 'text'}
@@ -626,7 +638,14 @@ export function WaiverDetail() {
                           {confidence !== undefined && <FieldConfidenceBadge value={confidence} />}
                         </div>
                         {useTextArea ? (
-                          <textarea value={fieldValue} onChange={(e) => setField(key, e.target.value)} style={S.textarea} rows={isArray ? 2 : 3} aria-label={fieldDef.label} readOnly={!isAdmin} disabled={!isAdmin} />
+                          <>
+                            <textarea value={fieldValue} onChange={(e) => setField(key, e.target.value)} style={S.textarea} rows={isArray ? 2 : 3} aria-label={fieldDef.label} readOnly={!isAdmin} disabled={!isAdmin} {...(key === 'release_notes' ? { maxLength: 500 } : {})} />
+                            {key === 'release_notes' && (
+                              <div style={{ fontSize: 11, color: fieldValue.length > 480 ? 'var(--color-red)' : 'var(--color-text-secondary)', textAlign: 'right', marginTop: 2 }}>
+                                {fieldValue.length}/500
+                              </div>
+                            )}
+                          </>
                         ) : (
                           <input type={isDate ? 'date' : 'text'} value={fieldValue} onChange={(e) => setField(key, e.target.value)} style={S.input} aria-label={fieldDef.label} readOnly={!isAdmin} disabled={!isAdmin} />
                         )}

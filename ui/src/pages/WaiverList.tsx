@@ -59,9 +59,9 @@ export function WaiverList() {
     }
   }, [searchParams]);
   const [airlineFilter, setAirlineFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '');
+  const [dateFrom, setDateFrom] = useState(searchParams.get('dateFrom') ?? '');
+  const [dateTo, setDateTo] = useState(searchParams.get('dateTo') ?? '');
   const [showArchived, setShowArchived] = useState(false);
 
   /* Fetch schema */
@@ -70,8 +70,9 @@ export function WaiverList() {
     queryFn: () => apiGet<FieldSchemaResponse>('/v1/settings/extraction-fields'),
   });
   const schema = schemaData?.data ? [...schemaData.data].sort((a, b) => a.order - b.order) : [];
-  // Show required fields as table columns (plus a few key ones)
-  const visibleFields = schema.filter((f) => f.required);
+  // Show only key columns in the waiver list table
+  const WAIVER_LIST_KEYS = new Set(['airline_code', 'waiver_title', 'waiver_code', 'effective_date', 'expiration_date']);
+  const visibleFields = schema.filter((f) => WAIVER_LIST_KEYS.has(f.key));
 
   const params: Record<string, string> = {
     page: String(page),
@@ -116,7 +117,11 @@ export function WaiverList() {
     const raw = waiver[field.key];
     if (raw == null) return '';
     if (Array.isArray(raw)) return raw.join(', ');
-    return String(raw);
+    const str = String(raw);
+    if (field.type === 'textarea' && str.length > 60) {
+      return str.slice(0, 60) + '…';
+    }
+    return str;
   };
 
   return (

@@ -326,6 +326,8 @@ export class ApiStack extends cdk.Stack {
         WEB_CONTENT_VERSIONS_TABLE: props.tableNames.webContentVersions,
         WEBHOOK_SUBSCRIPTIONS_TABLE: props.tableNames.webhookSubscriptions,
         CORRECTIONS_TABLE: props.tableNames.corrections,
+        NOTIFICATION_SENDER: `notifications@${this.node.tryGetContext('recipientDomain') ?? 'waivers.example.com'}`,
+        INGESTION_BUCKET: props.ingestionBucket.bucketName,
         AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       },
       bundling: { externalModules: ['@aws-sdk/*'] },
@@ -340,12 +342,24 @@ export class ApiStack extends cdk.Stack {
       ],
     }));
 
-    // Registration endpoint needs PutItem and Scan on Settings table
+    // Registration endpoint needs PutItem, Scan, and GetItem on Settings table
     publicApiFn.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:PutItem', 'dynamodb:Scan'],
+      actions: ['dynamodb:PutItem', 'dynamodb:Scan', 'dynamodb:GetItem'],
       resources: [
         `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.tableNames.settings}`,
       ],
+    }));
+
+    // SES permission for access request notifications
+    publicApiFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ses:SendEmail'],
+      resources: ['*'],
+    }));
+
+    // S3 read for source content viewer
+    publicApiFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['s3:GetObject'],
+      resources: [`${props.ingestionBucket.bucketArn}/*`],
     }));
 
     const publicApiGatewayRole = new iam.Role(this, 'PublicApiGatewayLambdaRole', {
@@ -374,6 +388,9 @@ export class ApiStack extends cdk.Stack {
 
     const publicWaiverId = publicWaivers.addResource('{id}');
     publicWaiverId.addMethod('GET', publicApiIntegration, apiKeyMethodOpts);
+
+    const publicWaiverSource = publicWaiverId.addResource('source');
+    publicWaiverSource.addMethod('GET', publicApiIntegration, apiKeyMethodOpts);
 
     const publicDocs = publicResource.addResource('docs');
     publicDocs.addMethod('GET', publicApiIntegration); // No API key required

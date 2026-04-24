@@ -64,11 +64,15 @@ async function submitCapture(url, text, html, screenshot, mode) {
   const payload = { url, text, html };
   if (screenshot) payload.screenshot = screenshot;
 
+  const token = await getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
   let body, ok;
   try {
     const response = await fetch(API_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     ok = response.ok;
@@ -86,6 +90,15 @@ async function submitCapture(url, text, html, screenshot, mode) {
 
   await showToast('success', 'Waiver captured and submitted to Waiver Hub');
   return { success: true, data: body, mode };
+}
+
+async function getAuthToken() {
+  try {
+    const result = await chrome.storage.local.get('waiverhub_id_token');
+    return result.waiverhub_id_token || null;
+  } catch {
+    return null;
+  }
 }
 
 async function showToast(type, message) {

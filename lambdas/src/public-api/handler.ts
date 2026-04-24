@@ -1,8 +1,15 @@
 import type { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
+import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { docClient, TableNames } from '../shared/db';
 import { GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { redactWaiver, redactWaivers } from './redact';
 import { getOpenApiSpec } from './openapi-spec';
+
+const ses = new SESClient({});
+const s3 = new S3Client({});
+const NOTIFICATION_SENDER = process.env.NOTIFICATION_SENDER ?? '';
+const INGESTION_BUCKET = process.env.INGESTION_BUCKET ?? '';
 
 const CORS_HEADERS = {
   'Content-Type': 'application/json',
@@ -44,9 +51,8 @@ async function listActiveWaivers(event: APIGatewayProxyEvent): Promise<APIGatewa
       TableName: TableNames.waivers,
       IndexName: 'status-index',
       KeyConditionExpression: '#s = :status',
-      FilterExpression: 'expiration_date > :now',
       ExpressionAttributeNames: { '#s': 'status' },
-      ExpressionAttributeValues: { ':status': 'active', ':now': now },
+      ExpressionAttributeValues: { ':status': 'active' },
       ExclusiveStartKey: lastKey,
     }));
     if (result.Items) allItems.push(...result.Items);
@@ -59,10 +65,26 @@ async function listActiveWaivers(event: APIGatewayProxyEvent): Promise<APIGatewa
     return bDate.localeCompare(aDate);
   });
 
-  const totalCount = allItems.length;
+  // Apply search and airline filters
+  let filtered = allItems;
+  if (qs.airline) {
+    const airline = qs.airline.toUpperCase();
+    filtered = filtered.filter((w) => (w.airline_code as string)?.toUpperCase() === airline);
+  }
+  if (qs.search) {
+    const term = qs.search.toLowerCase();
+    filtered = filtered.filter((w) =>
+      (w.waiver_code as string)?.toLowerCase().includes(term) ||
+      (w.airline_code as string)?.toLowerCase().includes(term) ||
+      (w.waiver_title as string)?.toLowerCase().includes(term) ||
+      ((w.airports ?? w.applicable_routes) as string[] | undefined)?.some((a) => a.toLowerCase().includes(term)),
+    );
+  }
+
+  const totalCount = filtered.length;
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
   const offset = (page - 1) * pageSize;
-  const data = redactWaivers(allItems.slice(offset, offset + pageSize));
+  const data = redactWaivers(filtered.slice(offset, offset + pageSize));
 
   return json(200, { data, pagination: { page, pageSize, totalCount, totalPages } });
 }
@@ -93,9 +115,8 @@ async function searchWaivers(event: APIGatewayProxyEvent): Promise<APIGatewayPro
       TableName: TableNames.waivers,
       IndexName: 'status-index',
       KeyConditionExpression: '#s = :status',
-      FilterExpression: 'expiration_date > :now',
       ExpressionAttributeNames: { '#s': 'status' },
-      ExpressionAttributeValues: { ':status': 'active', ':now': now },
+      ExpressionAttributeValues: { ':status': 'active' },
       ExclusiveStartKey: lastKey,
     }));
     if (result.Items) allItems.push(...result.Items);
@@ -116,9 +137,24 @@ async function searchWaivers(event: APIGatewayProxyEvent): Promise<APIGatewayPro
   }
   if (qs.route) {
     filtered = filtered.filter((w) => {
-      const routes = w.applicable_routes as string[] | undefined;
-      return routes?.includes(qs.route!) ?? false;
+      const airports = (w.airports ?? w.applicable_routes) as string[] | undefined;
+      return airports?.some(a => a.toUpperCase() === qs.route!.toUpperCase()) ?? false;
     });
+  }
+  if (qs.airport) {
+    filtered = filtered.filter((w) => {
+      const airports = (w.airports ?? w.applicable_routes) as string[] | undefined;
+      return airports?.some(a => a.toUpperCase() === qs.airport!.toUpperCase()) ?? false;
+    });
+  }
+  if (qs.search) {
+    const term = qs.search.toLowerCase();
+    filtered = filtered.filter((w) =>
+      (w.waiver_code as string)?.toLowerCase().includes(term) ||
+      (w.airline_code as string)?.toLowerCase().includes(term) ||
+      (w.waiver_title as string)?.toLowerCase().includes(term) ||
+      ((w.airports ?? w.applicable_routes) as string[] | undefined)?.some((a) => a.toLowerCase().includes(term)),
+    );
   }
 
   filtered.sort((a, b) => {
@@ -179,7 +215,86 @@ async function registerRequest(event: APIGatewayProxyEvent): Promise<APIGatewayP
     },
   }));
 
+  // Notify admin users about the new access request (fire-and-forget)
+  notifyAdminsOfAccessRequest(name, email, company).catch((err) =>
+    console.error('Failed to send access request notification:', err),
+  );
+
   return json(201, { data: { id, status: 'pending' } });
+}
+
+async function notifyAdminsOfAccessRequest(name: string, email: string, company: string): Promise<void> {
+  if (!NOTIFICATION_SENDER || !TableNames.settings) return;
+
+  let recipients: string[] = [];
+  try {
+    const result = await docClient.send(new GetCommand({
+      TableName: TableNames.settings,
+      Key: { key: 'notification_recipients' },
+    }));
+    if (result.Item?.value) {
+      recipients = JSON.parse(result.Item.value as string);
+    }
+  } catch {
+    return;
+  }
+
+  if (!Array.isArray(recipients) || recipients.length === 0) return;
+
+  const body = [
+    'A new access request has been submitted to Waiver Hub.',
+    '',
+    `Name: ${name}`,
+    `Email: ${email}`,
+    `Company: ${company}`,
+    `Submitted: ${new Date().toISOString()}`,
+    '',
+    'Please review this request in the Users section of the application.',
+  ].join('\n');
+
+  await ses.send(new SendEmailCommand({
+    Source: NOTIFICATION_SENDER,
+    Destination: { ToAddresses: recipients },
+    Message: {
+      Subject: { Data: `New Access Request — ${name} (${company})` },
+      Body: { Text: { Data: body } },
+    },
+  }));
+}
+
+// --- Public source content ---
+
+async function getWaiverSource(id: string): Promise<APIGatewayProxyResult> {
+  const result = await docClient.send(new GetCommand({
+    TableName: TableNames.waivers,
+    Key: { id },
+  }));
+
+  if (!result.Item || result.Item.status !== 'active') {
+    return errorResponse('NOT_FOUND', 'Waiver not found', 404);
+  }
+
+  if (!INGESTION_BUCKET) {
+    return json(200, { data: { content: 'Source content not available.', type: 'text' } });
+  }
+
+  const normalizedKey = result.Item.normalized_s3_key as string;
+  const sourceKey = result.Item.source_s3_key as string;
+  const sourceType = result.Item.source_type as string;
+
+  let content = '';
+  const keysToTry = [normalizedKey, sourceKey].filter(Boolean);
+  for (const key of keysToTry) {
+    try {
+      const resp = await s3.send(new GetObjectCommand({ Bucket: INGESTION_BUCKET, Key: key }));
+      content = await resp.Body!.transformToString('utf-8');
+      if (content.trim()) break;
+    } catch { /* try next */ }
+  }
+
+  if (!content) content = 'Source content could not be retrieved.';
+
+  return json(200, { data: { content, type: 'text', sourceType } });
 }
 
 // --- Router ---
@@ -211,9 +326,13 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
         if (method === 'GET' && segments[3] === 'search') {
           return await searchWaivers(event);
         }
+        if (method === 'GET' && segments[3] && segments[4] === 'source') {
+          const wid = event.pathParameters?.id ?? segments[3];
+          return await getWaiverSource(wid);
+        }
         if (method === 'GET' && segments[3] && segments[3] !== 'search') {
-          const id = event.pathParameters?.id ?? segments[3];
-          return await getWaiverById(id);
+          const wid = event.pathParameters?.id ?? segments[3];
+          return await getWaiverById(wid);
         }
         if (method === 'GET' && !segments[3]) {
           return await listActiveWaivers(event);

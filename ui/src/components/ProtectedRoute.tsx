@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useRef, useCallback, type ReactNode } from 'react';
 import { useLocation, Navigate } from 'react-router-dom';
-import { isAuthenticated, handleCallback, getUserInfo } from '../auth/pkce';
+import { isAuthenticated, handleCallback, getUserInfo, logout } from '../auth/pkce';
 import { resolveRole, type AppRole } from '../auth/role';
 import { Login } from '../pages/Login';
 
 const ADMIN_ONLY_ROUTES = ['/review', '/ingest', '/rules', '/settings', '/users', '/monitoring'];
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 interface Props {
   children: ReactNode;
@@ -39,6 +40,29 @@ export function ProtectedRoute({ children }: Props) {
       setRoleResolved(true);
     }
   }, [state]);
+
+  // --- Inactivity auto-logout (30 min) ---
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetTimer = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      logout();
+    }, INACTIVITY_TIMEOUT_MS);
+  }, []);
+
+  useEffect(() => {
+    if (state !== 'authenticated') return;
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    events.forEach(e => window.addEventListener(e, resetTimer, { passive: true }));
+    resetTimer(); // start the timer
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      events.forEach(e => window.removeEventListener(e, resetTimer));
+    };
+  }, [state, resetTimer]);
 
   if (state === 'loading') {
     return (
