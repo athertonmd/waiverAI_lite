@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
-import { apiPost } from '../api/client';
+import { useQuery } from '@tanstack/react-query';
+import { apiPost, apiGet } from '../api/client';
 
 interface UrlEntry {
   id: number;
@@ -245,6 +246,9 @@ export function Ingest() {
 
       {/* PDF Upload Section */}
       <PdfUploadSection />
+
+      {/* Previously Ingested URLs */}
+      <PreviouslyIngestedUrls />
     </div>
   );
 }
@@ -395,6 +399,70 @@ function StatusIcon({ status }: { status: UrlEntry['status'] }) {
   if (status === 'success') return <span style={{ fontSize: 16, color: 'var(--color-green)' }}>✓</span>;
   if (status === 'error') return <span style={{ fontSize: 16, color: 'var(--color-red)' }}>✗</span>;
   return <span style={{ width: 16 }} />;
+}
+
+function PreviouslyIngestedUrls() {
+  const { data } = useQuery<{ data: { source_url?: string; source_type?: string; ingestion_timestamp?: string; airline_code?: string; waiver_title?: string; id?: string }[] }>({
+    queryKey: ['waivers-for-urls'],
+    queryFn: () => apiGet('/v1/waivers', { pageSize: '200' }),
+  });
+
+  const webWaivers = (data?.data ?? []).filter(
+    (w) => (w.source_type === 'web' || w.source_type === 'browser-capture') && w.source_url,
+  );
+
+  // Deduplicate by source_url, keep the most recent
+  const urlMap = new Map<string, typeof webWaivers[0]>();
+  for (const w of webWaivers) {
+    const existing = urlMap.get(w.source_url!);
+    if (!existing || (w.ingestion_timestamp ?? '') > (existing.ingestion_timestamp ?? '')) {
+      urlMap.set(w.source_url!, w);
+    }
+  }
+  const uniqueUrls = [...urlMap.values()].sort((a, b) =>
+    (b.ingestion_timestamp ?? '').localeCompare(a.ingestion_timestamp ?? ''),
+  );
+
+  if (uniqueUrls.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 32 }}>
+      <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>Previously Ingested URLs</h2>
+      <p style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
+        URLs previously submitted by any user. Click to view the waiver.
+      </p>
+      <div className="card" style={{ padding: 0 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: '2px solid var(--color-border)' }}>
+              <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--color-text-secondary)', fontSize: 11, textTransform: 'uppercase' }}>URL</th>
+              <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--color-text-secondary)', fontSize: 11, textTransform: 'uppercase' }}>Airline</th>
+              <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--color-text-secondary)', fontSize: 11, textTransform: 'uppercase' }}>Waiver</th>
+              <th style={{ textAlign: 'left', padding: '8px 12px', color: 'var(--color-text-secondary)', fontSize: 11, textTransform: 'uppercase' }}>Ingested</th>
+            </tr>
+          </thead>
+          <tbody>
+            {uniqueUrls.map((w) => (
+              <tr key={w.source_url} style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
+                onClick={() => { if (w.id) window.location.href = `/waivers/${w.id}`; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#f5f7fa'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
+              >
+                <td style={{ padding: '8px 12px', maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <a href={w.source_url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)' }} onClick={(e) => e.stopPropagation()}>
+                    {w.source_url}
+                  </a>
+                </td>
+                <td style={{ padding: '8px 12px' }}>{w.airline_code ?? '—'}</td>
+                <td style={{ padding: '8px 12px' }}>{w.waiver_title ?? '—'}</td>
+                <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>{w.ingestion_timestamp ? new Date(w.ingestion_timestamp).toLocaleDateString() : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 const S: Record<string, React.CSSProperties> = {
