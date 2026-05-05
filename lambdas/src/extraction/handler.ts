@@ -16,7 +16,7 @@ const SETTINGS_TABLE = process.env.SETTINGS_TABLE ?? '';
 
 export interface ExtractionEvent {
   normalizedS3Key: string;
-  sourceType: 'email' | 'pdf' | 'web';
+  sourceType: 'email' | 'pdf' | 'web' | 'lumo';
   recordId: string;
 }
 
@@ -65,7 +65,7 @@ export async function handler(event: ExtractionEvent): Promise<ExtractionResult>
     const schema = await fetchFieldSchema();
     const sourceUrl = (event as any).sourceUrl ?? '';
     const corrections = await fetchRecentCorrections(sourceType);
-    const prompt = buildExtractionPrompt(normalizedText, schema, sourceUrl || undefined, corrections);
+    const prompt = buildExtractionPrompt(normalizedText, schema, sourceUrl || undefined, corrections, sourceType);
     const bedrockResponse = await invokeModel(prompt);
     const extracted = parseBedrockResponse(bedrockResponse, schema);
     const overallConfidence = computeOverallConfidence(extracted.confidence_scores, schema);
@@ -140,7 +140,22 @@ function getTypeInstruction(fieldDef: FieldDefinition): string {
   }
 }
 
-export function buildExtractionPrompt(normalizedText: string, schema: FieldSchema, sourceUrl?: string, corrections?: CorrectionExample[]): string {
+const LUMO_PREAMBLE = `The source document is structured JSON from the Lumo API (thinklumo.com).
+Map the following Lumo fields to WaiverHub fields:
+- id → waiver_code
+- alert.summary → waiver_title
+- location.airports → airports
+- period.start → effective_date
+- period.end → expiration_date
+- waiver_codes → fare_classes (if applicable)
+- remarks + alert.description → rebooking_rules, refund_rules, release_notes
+- dom_intl → airports_qualifier (domestic="From", international="From-To")
+Infer airline_code and airline_name from the waiver content where possible.
+`;
+
+export function buildExtractionPrompt(normalizedText: string, schema: FieldSchema, sourceUrl?: string, corrections?: CorrectionExample[], sourceType?: string): string {
+  const lumoPreamble = sourceType === 'lumo' ? `\n${LUMO_PREAMBLE}` : '';
+
   const sourceHint = sourceUrl
     ? `\nSOURCE URL: ${sourceUrl}\nUse the source URL to help identify the airline. For example, "saleslink.aa.com" is American Airlines (AA), "etihadhub.com" is Etihad Airways (EY), "united.com" is United Airlines (UA), etc.\n`
     : '';
@@ -169,7 +184,7 @@ export function buildExtractionPrompt(normalizedText: string, schema: FieldSchem
   const confidenceExample = sortedSchema.map((f) => `  "${f.key}": 0.85`).join(',\n');
 
   return `You are an airline waiver data extraction assistant. Extract structured waiver information from the following text and return ONLY a valid JSON object with no additional text.
-${sourceHint}${correctionHint}
+${lumoPreamble}${sourceHint}${correctionHint}
 The JSON object must have exactly these fields:
 ${fieldInstructions}
 - "confidence_scores": object with a confidence score (0.0 to 1.0) for each field above

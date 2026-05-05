@@ -1,7 +1,10 @@
 import * as cdk from 'aws-cdk-lib';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as events_targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sns from 'aws-cdk-lib/aws-sns';
@@ -282,11 +285,73 @@ export class PipelineStack extends cdk.Stack {
     normaliseTask.next(addChromiumStage);
     addNormaliseStage.next(normaliseTask);
 
+    // Lumo bypass — skips normalise/chromium for Lumo sources
+    const lumoBypass = new sfn.Pass(this, 'LumoBypass', {
+      parameters: {
+        'normalizedS3Key.$': '$.s3Key',
+        'sourceS3Key.$': '$.s3Key',
+        'sourceType.$': '$.sourceType',
+        'recordId.$': '$.recordId',
+        'sourceUrl': '',
+      },
+    });
+    lumoBypass.next(addExtractStage);
+
+    // Source type routing — entry point for the state machine
+    const sourceTypeCheck = new sfn.Choice(this, 'SourceTypeCheck')
+      .when(sfn.Condition.stringEquals('$.sourceType', 'lumo'), lumoBypass)
+      .otherwise(addNormaliseStage);
+
     // State Machine
     this.stateMachine = new sfn.StateMachine(this, 'WaiverPipeline', {
-      definitionBody: sfn.DefinitionBody.fromChainable(addNormaliseStage),
+      definitionBody: sfn.DefinitionBody.fromChainable(sourceTypeCheck),
       timeout: cdk.Duration.minutes(30),
       tracingEnabled: true,
+    });
+
+    // --- Lumo Poller ---
+
+    // Secrets Manager secret for Lumo API key
+    const lumoSecretName = this.node.tryGetContext('lumoApiSecretName') ?? 'waiverhub/lumo-api-key';
+    const lumoApiSecret = new secretsmanager.Secret(this, 'LumoApiSecret', {
+      secretName: lumoSecretName,
+      description: 'API key for the Lumo waivers/search endpoint',
+      secretStringValue: cdk.SecretValue.unsafePlainText(JSON.stringify({ apiKey: 'REPLACE_ME' })),
+    });
+
+    // Lumo Poller Lambda
+    const lumoPollerFn = new lambdaNodejs.NodejsFunction(this, 'LumoPollerFn', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'handler',
+      entry: path.join(__dirname, '../../lambdas/src/lumo-poller/handler.ts'),
+      memorySize: 512,
+      timeout: cdk.Duration.seconds(60),
+      environment: {
+        LUMO_API_SECRET_ARN: lumoApiSecret.secretArn,
+        LUMO_API_BASE_URL: this.node.tryGetContext('lumoApiBaseUrl') ?? 'https://flifo-qa.flightstats.com/flex',
+        INGESTION_BUCKET: props.ingestionBucketName,
+        STATE_MACHINE_ARN: this.stateMachine.stateMachineArn,
+        SETTINGS_TABLE: props.tableNames.settings,
+      },
+      bundling: { externalModules: ['@aws-sdk/*'] },
+    });
+
+    // Grant Lumo Poller permissions
+    lumoApiSecret.grantRead(lumoPollerFn);
+    lumoPollerFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem'],
+      resources: [`arn:aws:dynamodb:${this.region}:${this.account}:table/${props.tableNames.settings}`],
+    }));
+    lumoPollerFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['s3:PutObject'],
+      resources: [`${props.ingestionBucketArn}/raw/lumo/*`],
+    }));
+    this.stateMachine.grantStartExecution(lumoPollerFn);
+
+    // EventBridge schedule for Lumo Poller (every 2 minutes)
+    new events.Rule(this, 'LumoPollerSchedule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(2)),
+      targets: [new events_targets.LambdaFunction(lumoPollerFn)],
     });
 
     // S3 trigger Lambda

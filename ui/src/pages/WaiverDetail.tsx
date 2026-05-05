@@ -382,13 +382,20 @@ export function WaiverDetail() {
                 : false;
               const fieldColor = hasSourceMatch ? getFieldColor(idx) : undefined;
 
+              // Check if this field was edited by a human (differs from original AI extraction)
+              const aiExtraction = (waiver.ai_extraction as Record<string, unknown>) ?? {};
+              const aiVal = aiExtraction[key];
+              const aiStr = aiVal != null ? (Array.isArray(aiVal) ? aiVal.join(', ') : String(aiVal)) : '';
+              const humanEdited = aiStr !== '' && fieldValue !== aiStr;
+
               return (
-                <div key={key} style={{ ...S.fieldGroup, ...(modified ? S.fieldModified : {}) }}>
+                <div key={key} style={{ ...S.fieldGroup, ...(modified ? S.fieldModified : {}), ...(humanEdited && !modified ? { borderLeft: '3px solid #1a73e8' } : {}) }}>
                   <div style={S.fieldLabelRow}>
                     <label style={{ ...S.fieldLabel, ...(fieldColor ? { color: 'var(--color-text)' } : {}) }}>
                       {fieldColor && <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: fieldColor, marginRight: 6 }} />}
                       {fieldDef.label}
                       {fieldDef.required && <span style={{ color: 'var(--color-red)', marginLeft: 2 }}>*</span>}
+                      {humanEdited && <span style={{ fontSize: 10, color: '#1a73e8', marginLeft: 6, fontWeight: 400 }}>✏ edited</span>}
                     </label>
                     {confidence !== undefined && <FieldConfidenceBadge value={confidence} />}
                   </div>
@@ -727,7 +734,10 @@ function SourceViewer({ waiverId, sourceType, extractedFields, fieldColorMap, fi
       const pdfUrl = data.data?.pdfUrl ?? '';
       const resolvedType = data.data?.sourceType ?? '';
 
-      if (resolvedType === 'pdf' && pdfUrl) {
+      if (resolvedType === 'lumo' || sourceType === 'lumo') {
+        setTab('text');
+        setAutoSwitched(true);
+      } else if (resolvedType === 'pdf' && pdfUrl) {
         setTab('screenshot');
         setAutoSwitched(true);
       } else if (resolvedType === 'email') {
@@ -759,21 +769,26 @@ function SourceViewer({ waiverId, sourceType, extractedFields, fieldColorMap, fi
 
   const isPdf = resolvedSourceType === 'pdf';
   const isEmail = resolvedSourceType === 'email';
+  const isLumo = resolvedSourceType === 'lumo' || sourceType === 'lumo';
 
-  const tabs: { key: typeof tab; label: string }[] = isPdf
+  const tabs: { key: typeof tab; label: string }[] = isLumo
     ? [
-        { key: 'screenshot', label: 'PDF Document' },
-        { key: 'text', label: 'Extracted Text' },
+        { key: 'text', label: 'JSON Source' },
       ]
-    : isEmail
+    : isPdf
       ? [
-          { key: 'text', label: 'Email Content' },
+          { key: 'screenshot', label: 'PDF Document' },
+          { key: 'text', label: 'Extracted Text' },
         ]
-      : [
-          { key: 'screenshot', label: 'Screenshot' },
-          { key: 'text', label: 'Rendered Text' },
-          { key: 'source', label: 'Source Page' },
-        ];
+      : isEmail
+        ? [
+            { key: 'text', label: 'Email Content' },
+          ]
+        : [
+            { key: 'screenshot', label: 'Screenshot' },
+            { key: 'text', label: 'Rendered Text' },
+            { key: 'source', label: 'Source Page' },
+          ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -817,10 +832,16 @@ function SourceViewer({ waiverId, sourceType, extractedFields, fieldColorMap, fi
         )
       )}
 
-      {/* Rendered text tab */}
+      {/* Rendered text / JSON Source tab */}
       {tab === 'text' && (
         <div style={{ ...S.textViewer, flex: 1 }}>
-          {content ? (
+          {isLumo ? (
+            content ? (
+              <LumoJsonViewer content={content} />
+            ) : (
+              <p style={{ color: 'var(--color-text-secondary)' }}>No source content available.</p>
+            )
+          ) : content ? (
             isBinaryText(content) ? (
               <div style={S.placeholder}>The fetched content appears to be binary (image or PDF) rather than readable text. Try the Source Page tab to view the original page directly.</div>
             ) : isErrorPageContent(content) ? (
@@ -857,6 +878,44 @@ function SourceViewer({ waiverId, sourceType, extractedFields, fieldColorMap, fi
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Display Lumo JSON source content with pretty-printing */
+function LumoJsonViewer({ content }: { content: string }) {
+  let formatted: string;
+  let parseError = false;
+
+  try {
+    formatted = JSON.stringify(JSON.parse(content), null, 2);
+  } catch {
+    formatted = content;
+    parseError = true;
+  }
+
+  return (
+    <div>
+      {parseError && (
+        <div style={{ padding: '8px 12px', marginBottom: 8, background: '#fff3e0', color: '#e65100', borderRadius: 4, fontSize: 13 }}>
+          ⚠ JSON formatting failed. Displaying raw content.
+        </div>
+      )}
+      <pre style={{
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        margin: 0,
+        fontSize: 13,
+        lineHeight: 1.6,
+        fontFamily: 'Consolas, Monaco, monospace',
+        background: '#fff',
+        padding: 12,
+        borderRadius: 4,
+        border: '1px solid var(--color-border)',
+        overflow: 'auto',
+      }}>
+        {formatted}
+      </pre>
     </div>
   );
 }
