@@ -142,15 +142,22 @@ function getTypeInstruction(fieldDef: FieldDefinition): string {
 
 const LUMO_PREAMBLE = `The source document is structured JSON from the Lumo API (thinklumo.com).
 Map the following Lumo fields to WaiverHub fields:
-- id → waiver_code
-- alert.summary → waiver_title
-- location.airports → airports
-- period.start → effective_date
-- period.end → expiration_date
-- waiver_codes → fare_classes (if applicable)
-- remarks + alert.description → rebooking_rules, refund_rules, release_notes
-- dom_intl → airports_qualifier (domestic="From", international="From-To")
-Infer airline_code and airline_name from the waiver content where possible.
+- source → airline_name (the airline that issued the waiver)
+- carriers array → airline_code (extract the 2-letter IATA code, e.g. "AA" from "AA*BA")
+- title → waiver_title
+- waiver_codes[].code → waiver_code (use the first code if multiple exist)
+- last_updated → issued_date (convert to YYYY-MM-DD)
+- original_ticket.travel_from → effective_date
+- original_ticket.travel_to → expiration_date
+- original_ticket.travel_from/travel_to → travel_dates_qualifier (use "between")
+- original_ticket.ticket_booked_on_before → ticket_issued_date, ticket_issued_qualifier (use "on or before")
+- scope.airports → airports (array of IATA 3-letter codes)
+- scope.domestic/international + scope.departures/arrivals → airports_qualifier ("From" if departures only, "To" if arrivals only, "From-To" if both or routes specified)
+- waiver_codes[].code → fare_classes (if multiple codes exist, treat as fare class list)
+- new_ticket.comments + description → rebooking_rules
+- instructions + disclaimer → refund_rules
+- description → release_notes (limit to 500 chars)
+Infer airline_code from the "carriers" array or "source" field where possible.
 `;
 
 export function buildExtractionPrompt(normalizedText: string, schema: FieldSchema, sourceUrl?: string, corrections?: CorrectionExample[], sourceType?: string): string {

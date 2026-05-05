@@ -183,37 +183,6 @@ export class PipelineStack extends cdk.Stack {
     );
     storeTask.next(successState);
 
-    // Auto-approve path
-    const autoApprove = new sfn.Pass(this, 'AutoApprove', {
-      parameters: {
-        'extractedS3Key.$': '$.extractedS3Key',
-        'recordId.$': '$.recordId',
-        'overallConfidence.$': '$.overallConfidence',
-        'status': 'auto_approved',
-        'currentStage': 'auto_approve',
-        'stageTimestamp.$': '$$.State.EnteredTime',
-      },
-    });
-    autoApprove.next(storeTask);
-
-    // Review queue path
-    const reviewQueue = new sfn.Pass(this, 'ReviewQueue', {
-      parameters: {
-        'extractedS3Key.$': '$.extractedS3Key',
-        'recordId.$': '$.recordId',
-        'overallConfidence.$': '$.overallConfidence',
-        'status': 'pending_review',
-        'currentStage': 'review_queue',
-        'stageTimestamp.$': '$$.State.EnteredTime',
-      },
-    });
-    reviewQueue.next(storeTask);
-
-    // Confidence threshold routing
-    const scoreCheck = new sfn.Choice(this, 'ScoreCheck')
-      .when(sfn.Condition.numberGreaterThanEquals('$.overallConfidence', 0.85), autoApprove)
-      .otherwise(reviewQueue);
-
     // Extract task with stage tracking
     const addExtractStage = new sfn.Pass(this, 'AddExtractStage', {
       parameters: {
@@ -237,7 +206,7 @@ export class PipelineStack extends cdk.Stack {
       }).next(failedState),
       { resultPath: '$' },
     );
-    extractTask.next(scoreCheck);
+    extractTask.next(storeTask);
     addExtractStage.next(extractTask);
 
     // Normalise task with stage tracking
@@ -352,6 +321,47 @@ export class PipelineStack extends cdk.Stack {
     new events.Rule(this, 'LumoPollerSchedule', {
       schedule: events.Schedule.rate(cdk.Duration.minutes(2)),
       targets: [new events_targets.LambdaFunction(lumoPollerFn)],
+    });
+
+    // --- Expiry Checker ---
+
+    const expiryCheckerFn = new lambdaNodejs.NodejsFunction(this, 'ExpiryCheckerFn', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'handler',
+      entry: path.join(__dirname, '../../lambdas/src/expiry-checker/handler.ts'),
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(60),
+      environment: {
+        WAIVERS_TABLE: props.tableNames.waivers,
+        SETTINGS_TABLE: props.tableNames.settings,
+      },
+      bundling: { externalModules: ['@aws-sdk/*'] },
+    });
+
+    // Grant DynamoDB read/write access to waivers table
+    expiryCheckerFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem',
+        'dynamodb:Query', 'dynamodb:Scan',
+      ],
+      resources: [
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.tableNames.waivers}`,
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.tableNames.waivers}/index/*`,
+      ],
+    }));
+
+    // Grant DynamoDB GetItem on settings table (for reading rule config)
+    expiryCheckerFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:GetItem'],
+      resources: [
+        `arn:aws:dynamodb:${this.region}:${this.account}:table/${props.tableNames.settings}`,
+      ],
+    }));
+
+    // EventBridge schedule for Expiry Checker (daily)
+    new events.Rule(this, 'ExpiryCheckerSchedule', {
+      schedule: events.Schedule.rate(cdk.Duration.days(1)),
+      targets: [new events_targets.LambdaFunction(expiryCheckerFn)],
     });
 
     // S3 trigger Lambda

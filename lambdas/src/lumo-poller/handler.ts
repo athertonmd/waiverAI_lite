@@ -67,7 +67,7 @@ export async function fetchLumoWaivers(apiKey: string): Promise<LumoWaiver[] | n
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'token': apiKey,
         'Accept': 'application/json',
       },
       signal: controller.signal,

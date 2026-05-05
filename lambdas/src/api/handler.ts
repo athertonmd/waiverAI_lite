@@ -15,6 +15,7 @@ import {
 import * as cache from '../shared/cache';
 import { dispatchWebhook } from '../webhooks/dispatcher';
 import { DEFAULT_SCHEMA, validateFieldSchema, FieldSchema } from '../shared/field-schema';
+import { getAllRules, updateRule, RuleId } from '../shared/rules';
 import {
   CognitoIdentityProviderClient,
   ListUsersCommand,
@@ -1649,6 +1650,55 @@ async function rejectRegistrationRequest(id: string): Promise<APIGatewayProxyRes
   return json(200, { data: { id, status: 'rejected' } });
 }
 
+// --- Rules Engine ---
+
+const VALID_RULE_IDS: RuleId[] = [
+  'auto_approve_threshold',
+  'duplicate_detection',
+  'expired_waiver_flagging',
+  'high_impact_priority_boost',
+];
+
+async function listRules(): Promise<APIGatewayProxyResult> {
+  const rules = await getAllRules();
+  return json(200, { data: rules });
+}
+
+async function updateRuleHandler(ruleId: string, event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> {
+  if (!VALID_RULE_IDS.includes(ruleId as RuleId)) {
+    return errorResponse('NOT_FOUND', `Rule "${ruleId}" not found`, 404);
+  }
+
+  let body: { enabled?: unknown; parameters?: unknown } = {};
+  try {
+    body = event.body ? JSON.parse(event.body) : {};
+  } catch {
+    return errorResponse('VALIDATION_ERROR', 'Invalid JSON body', 400);
+  }
+
+  // Validate enabled is a boolean if provided
+  if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+    return errorResponse('VALIDATION_ERROR', 'enabled must be a boolean', 400);
+  }
+
+  // Validate parameters.threshold for auto_approve_threshold
+  if (ruleId === 'auto_approve_threshold' && body.parameters !== undefined) {
+    const params = body.parameters as Record<string, unknown>;
+    if (params.threshold !== undefined) {
+      if (typeof params.threshold !== 'number' || params.threshold < 0 || params.threshold > 1) {
+        return errorResponse('VALIDATION_ERROR', 'parameters.threshold must be a number between 0.0 and 1.0', 400);
+      }
+    }
+  }
+
+  const updates: { enabled?: boolean; parameters?: Record<string, unknown> } = {};
+  if (body.enabled !== undefined) updates.enabled = body.enabled as boolean;
+  if (body.parameters !== undefined) updates.parameters = body.parameters as Record<string, unknown>;
+
+  const updated = await updateRule(ruleId as RuleId, updates);
+  return json(200, { data: updated });
+}
+
 // --- Router ---
 
 function extractPathSegments(event: APIGatewayProxyEvent): string[] {
@@ -1806,6 +1856,23 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     // DELETE /v1/monitoring/schedules/{id}
     if (method === 'DELETE' && segments[1] === 'monitoring' && segments[2] === 'schedules' && segments[3]) {
       return await terminateMonitorSchedule(segments[3]);
+    }
+
+    // --- Rules engine routes (admin-only) ---
+    if (segments[1] === 'rules') {
+      if (role !== 'admin') {
+        return errorResponse('FORBIDDEN', 'Forbidden: insufficient permissions', 403);
+      }
+
+      // GET /v1/rules
+      if (method === 'GET' && !segments[2]) {
+        return await listRules();
+      }
+      // PUT /v1/rules/{ruleId}
+      if (method === 'PUT' && segments[2] && !segments[3]) {
+        const ruleId = event.pathParameters?.ruleId ?? segments[2];
+        return await updateRuleHandler(ruleId, event);
+      }
     }
 
     // --- User management routes (admin-only) ---

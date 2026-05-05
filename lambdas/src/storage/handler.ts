@@ -4,6 +4,7 @@ import { PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { dispatchWebhook } from '../webhooks/dispatcher';
 import { checkForDuplicate } from './duplicate-detector';
 import { DEFAULT_SCHEMA } from '../shared/field-schema';
+import { getRule } from '../shared/rules';
 
 const s3 = new S3Client({});
 const BUCKET = process.env.INGESTION_BUCKET!;
@@ -12,7 +13,6 @@ export interface StoreEvent {
   extractedS3Key: string;
   recordId: string;
   overallConfidence: number;
-  status: 'auto_approved' | 'pending_review';
 }
 
 export interface StoreResult {
@@ -134,16 +134,35 @@ export async function upsertWaiver(
 }
 
 export async function handler(event: StoreEvent): Promise<StoreResult> {
-  const { extractedS3Key, recordId, status } = event;
+  const { extractedS3Key, recordId, overallConfidence } = event;
 
-  console.log(`Storing: recordId=${recordId}, status=${status}, key=${extractedS3Key}`);
+  // Read rules at the start — getRule falls back to defaults on DynamoDB errors
+  const [autoApproveRule, duplicateRule, highImpactRule] = await Promise.all([
+    getRule('auto_approve_threshold'),
+    getRule('duplicate_detection'),
+    getRule('high_impact_priority_boost'),
+  ]);
+
+  // Determine final status based on auto-approve rule
+  let finalStatus: string;
+  if (autoApproveRule.enabled) {
+    const threshold = (autoApproveRule.parameters.threshold as number) ?? 0.85;
+    finalStatus = overallConfidence >= threshold ? 'auto_approved' : 'pending_review';
+  } else {
+    finalStatus = 'pending_review';
+  }
+
+  console.log(`Storing: recordId=${recordId}, status=${finalStatus}, key=${extractedS3Key}`);
 
   const record = await fetchExtractedRecord(extractedS3Key);
 
-  // Check for duplicate before persisting
-  const airlineCode = (record.airline_code as string) ?? '';
-  const waiverCode = (record.waiver_code as string) ?? '';
-  const duplicateResult = await checkForDuplicate(airlineCode, waiverCode);
+  // Conditional duplicate detection based on rule
+  let duplicateResult = { isDuplicate: false, duplicateOfId: null as string | null };
+  if (duplicateRule.enabled) {
+    const airlineCode = (record.airline_code as string) ?? '';
+    const waiverCode = (record.waiver_code as string) ?? '';
+    duplicateResult = await checkForDuplicate(airlineCode, waiverCode);
+  }
 
   // Always insert as a new record using the pipeline-assigned recordId.
   // The duplicate detection (same airline_code + waiver_code + effective_date)
@@ -169,7 +188,7 @@ export async function handler(event: StoreEvent): Promise<StoreResult> {
   // System fields
   item.confidence_scores = record.confidence_scores;
   item.overall_confidence = record.overall_confidence;
-  item.status = status;
+  item.status = finalStatus;
   item.source_type = record.source_type;
   item.source_s3_key = record.source_s3_key;
   item.source_url = record.source_url ?? '';
@@ -181,6 +200,11 @@ export async function handler(event: StoreEvent): Promise<StoreResult> {
   item.duplicate_of_id = duplicateResult.duplicateOfId;
   item.created_at = now;
   item.updated_at = now;
+
+  // Conditional high-impact priority boost
+  if (highImpactRule.enabled && record.high_impact === true) {
+    item.priority = 'high';
+  }
 
   // Remove undefined values
   for (const key of Object.keys(item)) {
@@ -202,10 +226,10 @@ export async function handler(event: StoreEvent): Promise<StoreResult> {
     Item: item,
   }));
 
-  console.log(`Stored record ${recordId} with status=${status}`);
+  console.log(`Stored record ${recordId} with status=${finalStatus}`);
 
   // Fire-and-forget webhook
-  dispatchWebhook('waiver.created', { id: recordId, status }).catch(() => {});
+  dispatchWebhook('waiver.created', { id: recordId, status: finalStatus }).catch(() => {});
 
-  return { recordId, status, stored: true };
+  return { recordId, status: finalStatus, stored: true };
 }

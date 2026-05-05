@@ -18,6 +18,11 @@ jest.mock('@aws-sdk/lib-dynamodb', () => ({
   UpdateCommand: jest.fn((input: unknown) => ({ _type: 'Update', input })),
 }));
 
+const mockGetRule = jest.fn();
+jest.mock('../../shared/rules', () => ({
+  getRule: (...args: unknown[]) => mockGetRule(...args),
+}));
+
 process.env.INGESTION_BUCKET = 'test-bucket';
 process.env.WAIVERS_TABLE = 'test-waivers';
 process.env.WAIVER_VERSIONS_TABLE = 'test-waiver-versions';
@@ -58,7 +63,6 @@ function makeEvent(overrides: Partial<StoreEvent> = {}): StoreEvent {
     extractedS3Key: 'extracted/waiver-001.json',
     recordId: 'waiver-001',
     overallConfidence: 0.88,
-    status: 'auto_approved',
     ...overrides,
   };
 }
@@ -66,6 +70,42 @@ function makeEvent(overrides: Partial<StoreEvent> = {}): StoreEvent {
 function mockS3GetRecord(record: Record<string, unknown> = SAMPLE_RECORD) {
   mockS3Send.mockResolvedValue({
     Body: { transformToString: () => Promise.resolve(JSON.stringify(record)) },
+  });
+}
+
+/** Helper to set up default rule mocks (all enabled with defaults) */
+function mockDefaultRules() {
+  mockGetRule.mockImplementation((ruleId: string) => {
+    switch (ruleId) {
+      case 'auto_approve_threshold':
+        return Promise.resolve({
+          key: 'rule:auto_approve_threshold',
+          enabled: true,
+          parameters: { threshold: 0.85 },
+          updated_at: '2024-01-01T00:00:00Z',
+        });
+      case 'duplicate_detection':
+        return Promise.resolve({
+          key: 'rule:duplicate_detection',
+          enabled: true,
+          parameters: {},
+          updated_at: '2024-01-01T00:00:00Z',
+        });
+      case 'high_impact_priority_boost':
+        return Promise.resolve({
+          key: 'rule:high_impact_priority_boost',
+          enabled: true,
+          parameters: {},
+          updated_at: '2024-01-01T00:00:00Z',
+        });
+      default:
+        return Promise.resolve({
+          key: `rule:${ruleId}`,
+          enabled: true,
+          parameters: {},
+          updated_at: '2024-01-01T00:00:00Z',
+        });
+    }
   });
 }
 
@@ -134,16 +174,19 @@ describe('upsertWaiver', () => {
 });
 
 describe('handler (integration)', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockDefaultRules();
+  });
 
-  it('should store a new record (no existing version)', async () => {
+  it('should store a new record with auto_approved status when confidence >= threshold', async () => {
     mockS3GetRecord();
     // QueryCommand for duplicate detection (no match)
     mockDocClientSend.mockResolvedValueOnce({ Items: [] });
     // PutCommand for the new record
     mockDocClientSend.mockResolvedValueOnce({});
 
-    const result = await handler(makeEvent());
+    const result = await handler(makeEvent({ overallConfidence: 0.90 }));
 
     expect(result).toEqual({ recordId: 'waiver-001', status: 'auto_approved', stored: true });
     expect(mockDocClientSend).toHaveBeenCalledTimes(2);
@@ -153,33 +196,48 @@ describe('handler (integration)', () => {
     expect(putCall.input.Item.duplicate_of_id).toBeNull();
   });
 
-  it('should archive existing version before upserting updated record', async () => {
-    mockS3GetRecord();
-    // QueryCommand for duplicate detection (no match)
-    mockDocClientSend.mockResolvedValueOnce({ Items: [] });
-    // PutCommand for the new record
-    mockDocClientSend.mockResolvedValueOnce({});
-
-    const result = await handler(makeEvent());
-
-    expect(result.stored).toBe(true);
-    expect(mockDocClientSend).toHaveBeenCalledTimes(2);
-  });
-
-  it('should handle pending_review status', async () => {
+  it('should store with pending_review status when confidence < threshold', async () => {
     mockS3GetRecord();
     // QueryCommand for duplicate detection (no match)
     mockDocClientSend.mockResolvedValueOnce({ Items: [] });
     mockDocClientSend.mockResolvedValueOnce({});
 
-    const result = await handler(makeEvent({ status: 'pending_review' }));
+    const result = await handler(makeEvent({ overallConfidence: 0.70 }));
 
     expect(result.status).toBe('pending_review');
     const putCall = mockDocClientSend.mock.calls[1][0];
     expect(putCall.input.Item.status).toBe('pending_review');
   });
 
-  it('should flag record as duplicate when match found', async () => {
+  it('should store with pending_review when auto-approve rule is disabled', async () => {
+    mockGetRule.mockImplementation((ruleId: string) => {
+      if (ruleId === 'auto_approve_threshold') {
+        return Promise.resolve({
+          key: 'rule:auto_approve_threshold',
+          enabled: false,
+          parameters: { threshold: 0.85 },
+          updated_at: '2024-01-01T00:00:00Z',
+        });
+      }
+      return Promise.resolve({
+        key: `rule:${ruleId}`,
+        enabled: true,
+        parameters: {},
+        updated_at: '2024-01-01T00:00:00Z',
+      });
+    });
+
+    mockS3GetRecord();
+    // QueryCommand for duplicate detection (no match)
+    mockDocClientSend.mockResolvedValueOnce({ Items: [] });
+    mockDocClientSend.mockResolvedValueOnce({});
+
+    const result = await handler(makeEvent({ overallConfidence: 0.99 }));
+
+    expect(result.status).toBe('pending_review');
+  });
+
+  it('should flag record as duplicate when match found and rule enabled', async () => {
     mockS3GetRecord();
     // QueryCommand for duplicate detection (match found)
     mockDocClientSend.mockResolvedValueOnce({
@@ -194,5 +252,81 @@ describe('handler (integration)', () => {
     const putCall = mockDocClientSend.mock.calls[1][0];
     expect(putCall.input.Item.is_duplicate).toBe(true);
     expect(putCall.input.Item.duplicate_of_id).toBe('original-001');
+  });
+
+  it('should skip duplicate detection when rule is disabled', async () => {
+    mockGetRule.mockImplementation((ruleId: string) => {
+      if (ruleId === 'duplicate_detection') {
+        return Promise.resolve({
+          key: 'rule:duplicate_detection',
+          enabled: false,
+          parameters: {},
+          updated_at: '2024-01-01T00:00:00Z',
+        });
+      }
+      return Promise.resolve({
+        key: `rule:${ruleId}`,
+        enabled: true,
+        parameters: ruleId === 'auto_approve_threshold' ? { threshold: 0.85 } : {},
+        updated_at: '2024-01-01T00:00:00Z',
+      });
+    });
+
+    mockS3GetRecord();
+    // PutCommand for the new record (no QueryCommand for duplicate detection)
+    mockDocClientSend.mockResolvedValueOnce({});
+
+    const result = await handler(makeEvent());
+
+    expect(result.stored).toBe(true);
+    const putCall = mockDocClientSend.mock.calls[0][0];
+    expect(putCall.input.Item.is_duplicate).toBe(false);
+    // Only 1 DynamoDB call (PutCommand), no QueryCommand for duplicate detection
+    expect(mockDocClientSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('should set priority high when high-impact rule enabled and record flagged', async () => {
+    mockS3GetRecord({ ...SAMPLE_RECORD, high_impact: true });
+    // QueryCommand for duplicate detection (no match)
+    mockDocClientSend.mockResolvedValueOnce({ Items: [] });
+    // PutCommand for the new record
+    mockDocClientSend.mockResolvedValueOnce({});
+
+    const result = await handler(makeEvent());
+
+    expect(result.stored).toBe(true);
+    const putCall = mockDocClientSend.mock.calls[1][0];
+    expect(putCall.input.Item.priority).toBe('high');
+  });
+
+  it('should not set priority when high-impact rule is disabled', async () => {
+    mockGetRule.mockImplementation((ruleId: string) => {
+      if (ruleId === 'high_impact_priority_boost') {
+        return Promise.resolve({
+          key: 'rule:high_impact_priority_boost',
+          enabled: false,
+          parameters: {},
+          updated_at: '2024-01-01T00:00:00Z',
+        });
+      }
+      return Promise.resolve({
+        key: `rule:${ruleId}`,
+        enabled: true,
+        parameters: ruleId === 'auto_approve_threshold' ? { threshold: 0.85 } : {},
+        updated_at: '2024-01-01T00:00:00Z',
+      });
+    });
+
+    mockS3GetRecord({ ...SAMPLE_RECORD, high_impact: true });
+    // QueryCommand for duplicate detection (no match)
+    mockDocClientSend.mockResolvedValueOnce({ Items: [] });
+    // PutCommand for the new record
+    mockDocClientSend.mockResolvedValueOnce({});
+
+    const result = await handler(makeEvent());
+
+    expect(result.stored).toBe(true);
+    const putCall = mockDocClientSend.mock.calls[1][0];
+    expect(putCall.input.Item.priority).toBeUndefined();
   });
 });

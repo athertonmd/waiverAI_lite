@@ -837,7 +837,7 @@ function SourceViewer({ waiverId, sourceType, extractedFields, fieldColorMap, fi
         <div style={{ ...S.textViewer, flex: 1 }}>
           {isLumo ? (
             content ? (
-              <LumoJsonViewer content={content} />
+              <LumoJsonViewer content={content} extractedFields={extractedFields} fieldColorMap={fieldColorMap} fieldLabelMap={fieldLabelMap} />
             ) : (
               <p style={{ color: 'var(--color-text-secondary)' }}>No source content available.</p>
             )
@@ -882,39 +882,89 @@ function SourceViewer({ waiverId, sourceType, extractedFields, fieldColorMap, fi
   );
 }
 
-/** Display Lumo JSON source content with pretty-printing */
-function LumoJsonViewer({ content }: { content: string }) {
-  let formatted: string;
+/** Display Lumo JSON source content with highlighting of extracted field values */
+function LumoJsonViewer({ content, extractedFields, fieldColorMap, fieldLabelMap }: {
+  content: string;
+  extractedFields: Record<string, string> | null;
+  fieldColorMap: Record<string, string>;
+  fieldLabelMap: Record<string, string>;
+}) {
+  let parsed: unknown;
   let parseError = false;
 
   try {
-    formatted = JSON.stringify(JSON.parse(content), null, 2);
+    parsed = JSON.parse(content);
   } catch {
-    formatted = content;
     parseError = true;
   }
 
-  return (
-    <div>
-      {parseError && (
+  if (parseError || !parsed) {
+    return (
+      <div>
         <div style={{ padding: '8px 12px', marginBottom: 8, background: '#fff3e0', color: '#e65100', borderRadius: 4, fontSize: 13 }}>
           ⚠ JSON formatting failed. Displaying raw content.
         </div>
-      )}
+        <pre style={{
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontSize: 13,
+          lineHeight: 1.6, fontFamily: 'Consolas, Monaco, monospace',
+          background: '#fff', padding: 12, borderRadius: 4, border: '1px solid var(--color-border)', overflow: 'auto',
+        }}>
+          {content}
+        </pre>
+      </div>
+    );
+  }
+
+  // Build a set of extracted values to match against JSON values
+  const valueToFields: Map<string, { color: string; label: string }[]> = new Map();
+  if (extractedFields) {
+    for (const [fieldKey, fieldValue] of Object.entries(extractedFields)) {
+      if (!fieldValue || !fieldValue.trim()) continue;
+      const color = fieldColorMap[fieldKey];
+      const label = fieldLabelMap[fieldKey] || fieldKey;
+      if (!color) continue;
+      // For arrays stored as comma-separated, split and match individual values too
+      const values = Array.isArray(fieldValue) ? fieldValue : [fieldValue];
+      for (const v of values) {
+        const normalized = String(v).trim();
+        if (!normalized) continue;
+        const existing = valueToFields.get(normalized) || [];
+        existing.push({ color, label });
+        valueToFields.set(normalized, existing);
+      }
+    }
+  }
+
+  // Render JSON with highlighting
+  const formatted = JSON.stringify(parsed, null, 2);
+  const lines = formatted.split('\n');
+
+  return (
+    <div>
       <pre style={{
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-word',
-        margin: 0,
-        fontSize: 13,
-        lineHeight: 1.6,
-        fontFamily: 'Consolas, Monaco, monospace',
-        background: '#fff',
-        padding: 12,
-        borderRadius: 4,
-        border: '1px solid var(--color-border)',
-        overflow: 'auto',
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, fontSize: 13,
+        lineHeight: 1.6, fontFamily: 'Consolas, Monaco, monospace',
+        background: '#fff', padding: 12, borderRadius: 4, border: '1px solid var(--color-border)', overflow: 'auto',
       }}>
-        {formatted}
+        {lines.map((line, i) => {
+          // Check if any extracted value appears in this line
+          let matchInfo: { color: string; label: string } | null = null;
+          for (const [value, fields] of valueToFields) {
+            if (value.length >= 3 && line.includes(value)) {
+              matchInfo = fields[0];
+              break;
+            }
+          }
+
+          if (matchInfo) {
+            return (
+              <span key={i} style={{ background: matchInfo.color + '22', borderLeft: `3px solid ${matchInfo.color}`, paddingLeft: 4, display: 'inline-block', width: '100%' }} title={matchInfo.label}>
+                {line}{'\n'}
+              </span>
+            );
+          }
+          return <span key={i}>{line}{'\n'}</span>;
+        })}
       </pre>
     </div>
   );
