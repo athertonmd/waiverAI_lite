@@ -293,6 +293,13 @@ export class ApiStack extends cdk.Stack {
     const webhookId = webhooks.addResource('{id}');
     addRoute(webhookId, 'DELETE');
 
+    // --- /v1/rules ---
+    const rules = v1.addResource('rules');
+    addRoute(rules, 'GET');
+
+    const ruleId = rules.addResource('{ruleId}');
+    addRoute(ruleId, 'PUT');
+
     // --- /v1/users ---
     // Reuse the main ApiFnV2 Lambda and apiIntegration (same as all other routes)
     const users = v1.addResource('users');
