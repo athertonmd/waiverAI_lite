@@ -50,13 +50,6 @@ export class DatabaseStack extends cdk.Stack {
       projectionType: dynamodb.ProjectionType.ALL,
     });
 
-    this.waiversTable.addGlobalSecondaryIndex({
-      indexName: 'status-created_at-index',
-      partitionKey: { name: 'status', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'created_at', type: dynamodb.AttributeType.STRING },
-      projectionType: dynamodb.ProjectionType.ALL,
-    });
-
     // --- WaiverVersions table ---
     this.waiverVersionsTable = new dynamodb.Table(this, 'WaiverVersionsTable', {
       tableName: `${this.stackName}-WaiverVersions`,
