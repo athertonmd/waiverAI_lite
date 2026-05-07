@@ -956,14 +956,28 @@ function LumoJsonViewer({ content, extractedFields, fieldColorMap, fieldLabelMap
             }
           }
 
+          // Check if line contains a URL and make it clickable
+          const urlRegex = /(https?:\/\/[^\s"',]+)/g;
+          const renderLineWithLinks = (text: string) => {
+            const parts = text.split(urlRegex);
+            if (parts.length === 1) return text;
+            return parts.map((part, j) =>
+              urlRegex.test(part) ? (
+                <a key={j} href={part} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>{part}</a>
+              ) : part
+            );
+          };
+          // Reset regex lastIndex after split
+          urlRegex.lastIndex = 0;
+
           if (matchInfo) {
             return (
               <span key={i} style={{ background: matchInfo.color + '22', borderLeft: `3px solid ${matchInfo.color}`, paddingLeft: 4, display: 'inline-block', width: '100%' }} title={matchInfo.label}>
-                {line}{'\n'}
+                {renderLineWithLinks(line)}{'\n'}
               </span>
             );
           }
-          return <span key={i}>{line}{'\n'}</span>;
+          return <span key={i}>{renderLineWithLinks(line)}{'\n'}</span>;
         })}
       </pre>
     </div>

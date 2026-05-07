@@ -421,6 +421,88 @@ describe('GET /v1/dashboard/metrics', () => {
     expect(body.data).toHaveProperty('airlineDistribution');
     expect(body.data).toHaveProperty('recentWaivers');
   });
+
+  it('returns expiredWaivers with correct count', async () => {
+    const items = [
+      { id: '1', waiver_code: 'WX-001', airline_code: 'AA', status: 'expired', ingestion_timestamp: '2024-01-15T10:00:00Z' },
+      { id: '2', waiver_code: 'WX-002', airline_code: 'UA', status: 'expired', ingestion_timestamp: '2024-01-15T11:00:00Z' },
+      { id: '3', waiver_code: 'WX-003', airline_code: 'DL', status: 'active', ingestion_timestamp: '2024-01-15T12:00:00Z' },
+      { id: '4', waiver_code: 'WX-004', airline_code: 'SW', status: 'pending_review', ingestion_timestamp: '2024-01-15T13:00:00Z' },
+      { id: '5', waiver_code: 'WX-005', airline_code: 'BA', status: 'expired', ingestion_timestamp: '2024-01-15T14:00:00Z' },
+    ];
+    mockDocClientSend.mockResolvedValueOnce({ Items: items, LastEvaluatedKey: undefined });
+
+    const event = setRole(
+      makeEvent({
+        path: '/v1/dashboard/metrics',
+        resource: '/v1/dashboard/metrics',
+      }),
+      'admin',
+    );
+    const res = await handler(event);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.data.expiredWaivers).toBe(3);
+  });
+
+  it('excludes expired waivers from recentWaivers list', async () => {
+    const items = [
+      { id: '1', waiver_code: 'WX-001', airline_code: 'AA', status: 'expired', ingestion_timestamp: '2024-01-15T10:00:00Z' },
+      { id: '2', waiver_code: 'WX-002', airline_code: 'UA', status: 'active', ingestion_timestamp: '2024-01-15T11:00:00Z' },
+      { id: '3', waiver_code: 'WX-003', airline_code: 'DL', status: 'expired', ingestion_timestamp: '2024-01-15T12:00:00Z' },
+      { id: '4', waiver_code: 'WX-004', airline_code: 'SW', status: 'pending_review', ingestion_timestamp: '2024-01-15T13:00:00Z' },
+    ];
+    mockDocClientSend.mockResolvedValueOnce({ Items: items, LastEvaluatedKey: undefined });
+
+    const event = setRole(
+      makeEvent({
+        path: '/v1/dashboard/metrics',
+        resource: '/v1/dashboard/metrics',
+      }),
+      'admin',
+    );
+    const res = await handler(event);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.data.recentWaivers).toHaveLength(2);
+    expect(body.data.recentWaivers.every((w: { status: string }) => w.status !== 'expired')).toBe(true);
+  });
+
+  it('returns at most 10 items in recentWaivers after filtering expired', async () => {
+    // Create 15 non-expired items and 5 expired items — after filtering, only non-expired remain
+    const items = Array.from({ length: 15 }, (_, i) => ({
+      id: `active-${i}`,
+      waiver_code: `WX-A${i}`,
+      airline_code: 'AA',
+      status: 'active',
+      ingestion_timestamp: `2024-01-${String(i + 1).padStart(2, '0')}T10:00:00Z`,
+    })).concat(
+      Array.from({ length: 5 }, (_, i) => ({
+        id: `expired-${i}`,
+        waiver_code: `WX-E${i}`,
+        airline_code: 'UA',
+        status: 'expired',
+        ingestion_timestamp: `2024-01-${String(i + 16).padStart(2, '0')}T10:00:00Z`,
+      })),
+    );
+    mockDocClientSend.mockResolvedValueOnce({ Items: items, LastEvaluatedKey: undefined });
+
+    const event = setRole(
+      makeEvent({
+        path: '/v1/dashboard/metrics',
+        resource: '/v1/dashboard/metrics',
+      }),
+      'admin',
+    );
+    const res = await handler(event);
+    const body = JSON.parse(res.body);
+
+    expect(res.statusCode).toBe(200);
+    expect(body.data.recentWaivers.length).toBeLessThanOrEqual(10);
+    expect(body.data.recentWaivers.every((w: { status: string }) => w.status !== 'expired')).toBe(true);
+  });
 });
 
 describe('GET /v1/settings/threshold', () => {

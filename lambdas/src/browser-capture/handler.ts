@@ -1,6 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { computeUrlHash } from '../web-fetcher/handler';
+import { randomUUID, createHash } from 'node:crypto';
 
 const s3 = new S3Client({});
 const BUCKET = process.env.INGESTION_BUCKET!;
@@ -16,6 +16,7 @@ export interface CaptureResult {
   s3Key: string;
   textS3Key: string;
   screenshotS3Key: string;
+  captureId: string;
   urlHash: string;
   timestamp: string;
 }
@@ -72,9 +73,10 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
     const html = body.html as string;
     const screenshot = typeof body.screenshot === 'string' ? body.screenshot : undefined;
 
-    const urlHash = computeUrlHash(url);
+    const captureId = randomUUID();
+    const urlHash = createHash('sha256').update(url).digest('hex');
     const timestamp = new Date().toISOString();
-    const baseKey = `raw/web/${urlHash}/${timestamp}`;
+    const baseKey = `raw/web/${captureId}/${timestamp}`;
 
     const htmlKey = `${baseKey}.html`;
     const textKey = `${baseKey}.txt`;
@@ -114,6 +116,7 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
       s3Key: htmlKey,
       textS3Key: textKey,
       screenshotS3Key: screenshot ? screenshotKey : '',
+      captureId,
       urlHash,
       timestamp,
     };

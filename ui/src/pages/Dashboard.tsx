@@ -29,6 +29,7 @@ interface DashboardMetrics {
     activeWaivers: number;
     processedToday: number;
     pendingReview: number;
+    expiredWaivers: number;
     averageConfidence: number;
     ingestionVolume: IngestionDay[];
     airlineDistribution: AirlineSlice[];
@@ -75,6 +76,7 @@ export function Dashboard() {
           navigate(`/waivers?dateFrom=${today}&dateTo=${today}`);
         }} />
         <KpiCard label="Pending Review" value={m.pendingReview} onClick={() => navigate('/review')} />
+        <KpiCard label="Expired Waivers" value={m.expiredWaivers ?? 0} onClick={() => navigate('/waivers?status=expired')} />
         <KpiCard label="Avg Confidence" value={`${(m.averageConfidence * 100).toFixed(1)}%`} />
       </div>
 
@@ -221,7 +223,7 @@ function PieChart({ data }: { data: AirlineSlice[] }) {
 
 const S: Record<string, React.CSSProperties> = {
   heading: { fontSize: 24, fontWeight: 600, marginBottom: 16 },
-  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 },
+  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 16 },
   kpiCard: { textAlign: 'center' },
   kpiLabel: { fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 4 },
   kpiValue: { fontSize: 28, fontWeight: 700, color: 'var(--color-text)' },

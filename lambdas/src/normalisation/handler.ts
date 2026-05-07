@@ -44,7 +44,31 @@ export async function handler(event: NormalisationEvent): Promise<NormalisationR
         if (isBinaryContent(rawContent)) {
           throw new Error(`Content at ${s3Key} appears to be binary (image/PDF), not text. Skipping normalisation.`);
         }
-        normalizedText = normaliseHtml(rawText);
+
+        // Check if this is a browser-capture source
+        let renderMethod = '';
+        try {
+          const headResp = await s3.send(new HeadObjectCommand({ Bucket: BUCKET, Key: s3Key }));
+          renderMethod = headResp.Metadata?.['render-method'] ?? '';
+        } catch {
+          // If metadata unavailable, fall through to default normaliseHtml
+        }
+
+        if (renderMethod === 'browser-capture') {
+          if (s3Key.endsWith('.txt')) {
+            // Browser-capture .txt file — use raw text directly (already clean)
+            normalizedText = rawText;
+          } else if (s3Key.endsWith('.html')) {
+            // Browser-capture .html file (fallback) — read the companion .txt file instead
+            const txtKey = s3Key.replace(/\.html$/, '.txt');
+            const txtContent = await getObject(BUCKET, txtKey);
+            normalizedText = txtContent.toString('utf-8');
+          } else {
+            normalizedText = normaliseHtml(rawText);
+          }
+        } else {
+          normalizedText = normaliseHtml(rawText);
+        }
         break;
       }
       case 'email':

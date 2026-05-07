@@ -251,6 +251,7 @@ export async function handler(event: ScheduledEvent): Promise<void> {
 
   let ingestedCount = 0;
   let skippedCount = 0;
+  const MAX_INGESTIONS_PER_CYCLE = 5; // Limit to avoid Lambda concurrency exhaustion
 
   // 4. Process each waiver
   for (const waiver of waivers) {
@@ -264,6 +265,12 @@ export async function handler(event: ScheduledEvent): Promise<void> {
       existingEntry.lastSeen = new Date().toISOString();
       skippedCount++;
       continue;
+    }
+
+    // Stop if we've hit the per-cycle limit
+    if (ingestedCount >= MAX_INGESTIONS_PER_CYCLE) {
+      console.log(`Reached max ingestions per cycle (${MAX_INGESTIONS_PER_CYCLE}), deferring remaining to next poll`);
+      break;
     }
 
     // New or changed waiver — ingest

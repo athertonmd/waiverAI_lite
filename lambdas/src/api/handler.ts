@@ -671,6 +671,7 @@ async function getDashboardMetrics(): Promise<APIGatewayProxyResult> {
   let activeCount = 0;
   let todayCount = 0;
   let pendingCount = 0;
+  let expiredCount = 0;
   let confidenceSum = 0;
   let confidenceCount = 0;
   const volumeMap: Record<string, number> = {};
@@ -679,8 +680,14 @@ async function getDashboardMetrics(): Promise<APIGatewayProxyResult> {
 
   for (const item of allItems) {
     const status = item.status as string;
-    if (status === 'active') activeCount++;
-    if (status === 'pending_review') pendingCount++;
+    const isDuplicate = item.is_duplicate === true;
+
+    // Count status-based KPIs excluding duplicates (primary records only)
+    if (!isDuplicate) {
+      if (status === 'active') activeCount++;
+      if (status === 'pending_review') pendingCount++;
+      if (status === 'expired') expiredCount++;
+    }
 
     const ingestionTs = (item.ingestion_timestamp as string) ?? '';
     const ingestionDate = ingestionTs.split('T')[0];
@@ -700,7 +707,9 @@ async function getDashboardMetrics(): Promise<APIGatewayProxyResult> {
       airlineMap[airline] = (airlineMap[airline] ?? 0) + 1;
     }
 
-    recent.push(item);
+    if (status !== 'expired') {
+      recent.push(item);
+    }
   }
 
   // Sort recent by ingestion_timestamp desc, group, then take top 10
@@ -743,6 +752,7 @@ async function getDashboardMetrics(): Promise<APIGatewayProxyResult> {
       activeWaivers: activeCount,
       processedToday: todayCount,
       pendingReview: pendingCount,
+      expiredWaivers: expiredCount,
       averageConfidence,
       ingestionVolume,
       airlineDistribution,

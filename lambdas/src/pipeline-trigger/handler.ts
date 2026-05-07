@@ -22,13 +22,49 @@ function resolveSourceType(key: string): 'email' | 'pdf' | 'web' {
 export async function handler(event: S3Event): Promise<void> {
   for (const record of event.Records) {
     const s3Key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '));
+    const bucket = record.s3.bucket.name;
 
-    // Skip auxiliary files (text extracts, screenshots) but allow email body.txt
-    const isEmailBody = s3Key.startsWith('raw/email/') && s3Key.endsWith('/body.txt');
-    if (!isEmailBody && (s3Key.endsWith('.txt') || s3Key.endsWith('.png') || s3Key.endsWith('.jpg'))) {
-      console.log(`Skipping auxiliary file: ${s3Key}`);
-      continue;
+    // Check if this is a browser-capture .txt file that should trigger the pipeline
+    if (s3Key.startsWith('raw/web/') && s3Key.endsWith('.txt')) {
+      try {
+        const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
+        if (head.Metadata?.['render-method'] === 'browser-capture') {
+          // Allow browser-capture .txt files through — they are the primary content
+          console.log(`Browser-capture .txt file allowed through: ${s3Key}`);
+          // Fall through to pipeline execution below
+        } else {
+          // Non-browser-capture .txt file — skip as before
+          console.log(`Skipping auxiliary file: ${s3Key}`);
+          continue;
+        }
+      } catch {
+        // If we can't read metadata, skip as before (safe default)
+        console.log(`Skipping auxiliary file (metadata unavailable): ${s3Key}`);
+        continue;
+      }
+    } else {
+      // Skip auxiliary files (text extracts, screenshots) but allow email body.txt
+      const isEmailBody = s3Key.startsWith('raw/email/') && s3Key.endsWith('/body.txt');
+      if (!isEmailBody && (s3Key.endsWith('.txt') || s3Key.endsWith('.png') || s3Key.endsWith('.jpg'))) {
+        console.log(`Skipping auxiliary file: ${s3Key}`);
+        continue;
+      }
     }
+
+    // Check if this is a browser-capture .html file that should be skipped
+    if (s3Key.startsWith('raw/web/') && s3Key.endsWith('.html')) {
+      try {
+        const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: s3Key }));
+        if (head.Metadata?.['render-method'] === 'browser-capture') {
+          // Skip browser-capture .html files — the .txt file is the trigger
+          console.log(`Skipping browser-capture .html file: ${s3Key}`);
+          continue;
+        }
+      } catch {
+        // If we can't read metadata, allow through (web-fetcher .html files should trigger)
+      }
+    }
+
     // Skip the raw MIME email file (SES stores it without extension) — the email processor handles it
     // and creates body.txt + PDF attachments which trigger the pipeline
     if (s3Key.startsWith('raw/email/') && !s3Key.includes('/') || false) {
@@ -56,7 +92,6 @@ export async function handler(event: S3Event): Promise<void> {
     // Send arrival notification for email sources
     if (sourceType === 'email') {
       try {
-        const bucket = record.s3.bucket.name;
         let emailFrom = 'unknown';
         let emailSubject = 'No subject';
         try {

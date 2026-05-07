@@ -294,7 +294,7 @@ export class PipelineStack extends cdk.Stack {
       handler: 'handler',
       entry: path.join(__dirname, '../../lambdas/src/lumo-poller/handler.ts'),
       memorySize: 512,
-      timeout: cdk.Duration.seconds(60),
+      timeout: cdk.Duration.seconds(120),
       environment: {
         LUMO_API_SECRET_ARN: lumoApiSecret.secretArn,
         LUMO_API_BASE_URL: this.node.tryGetContext('lumoApiBaseUrl') ?? 'https://flifo-qa.flightstats.com/flex',
@@ -317,9 +317,9 @@ export class PipelineStack extends cdk.Stack {
     }));
     this.stateMachine.grantStartExecution(lumoPollerFn);
 
-    // EventBridge schedule for Lumo Poller (every 2 minutes)
+    // EventBridge schedule for Lumo Poller (every 10 minutes)
     new events.Rule(this, 'LumoPollerSchedule', {
-      schedule: events.Schedule.rate(cdk.Duration.minutes(2)),
+      schedule: events.Schedule.rate(cdk.Duration.minutes(10)),
       targets: [new events_targets.LambdaFunction(lumoPollerFn)],
     });
 

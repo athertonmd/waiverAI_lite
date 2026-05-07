@@ -82,6 +82,8 @@ export function ReviewQueue() {
     queryFn: () => apiGet<WaiverListResponse>('/v1/waivers/search', params),
   });
 
+  const today = new Date().toISOString().split('T')[0];
+
   const allWaivers = (data?.data ?? [])
     .filter((w) => {
       if (confMin && w.overall_confidence < Number(confMin)) return false;
@@ -89,8 +91,15 @@ export function ReviewQueue() {
       return true;
     })
     .sort((a, b) => {
+      // In-date waivers (expiration_date >= today) first
+      const aInDate = (a.expiration_date as string ?? '') >= today;
+      const bInDate = (b.expiration_date as string ?? '') >= today;
+      if (aInDate && !bInDate) return -1;
+      if (!aInDate && bInDate) return 1;
+      // Then high impact
       if (a.high_impact && !b.high_impact) return -1;
       if (!a.high_impact && b.high_impact) return 1;
+      // Then by ingestion timestamp desc
       const aTs = a.ingestion_timestamp ?? '';
       const bTs = b.ingestion_timestamp ?? '';
       return bTs.localeCompare(aTs);

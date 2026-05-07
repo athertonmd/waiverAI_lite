@@ -1,18 +1,13 @@
 // Mock AWS SDK clients before importing handler
 const mockS3Send = jest.fn();
-const mockTextractSend = jest.fn();
 const mockSqsSend = jest.fn();
 
 jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn(() => ({ send: mockS3Send })),
   GetObjectCommand: jest.fn((input: unknown) => ({ _type: 'GetObject', input })),
+  HeadObjectCommand: jest.fn((input: unknown) => ({ _type: 'HeadObject', input })),
   PutObjectCommand: jest.fn((input: unknown) => ({ _type: 'PutObject', input })),
   PutObjectTaggingCommand: jest.fn((input: unknown) => ({ _type: 'PutObjectTagging', input })),
-}));
-
-jest.mock('@aws-sdk/client-textract', () => ({
-  TextractClient: jest.fn(() => ({ send: mockTextractSend })),
-  DetectDocumentTextCommand: jest.fn((input: unknown) => ({ _type: 'DetectDocumentText', input })),
 }));
 
 jest.mock('@aws-sdk/client-sqs', () => ({
@@ -24,6 +19,9 @@ const mockSimpleParser = jest.fn();
 jest.mock('mailparser', () => ({
   simpleParser: mockSimpleParser,
 }));
+
+const mockPdfParse = jest.fn();
+jest.mock('pdf-parse/lib/pdf-parse.js', () => mockPdfParse);
 
 process.env.INGESTION_BUCKET = 'test-bucket';
 process.env.DLQ_URL = 'https://sqs.us-east-1.amazonaws.com/123456789/normalisation-dlq';
@@ -58,16 +56,11 @@ describe('normalisation handler', () => {
   });
 
   describe('PDF normalisation', () => {
-    it('should extract text from PDF via Textract and store normalized output', async () => {
+    it('should extract text from PDF via pdf-parse and store normalized output', async () => {
       mockGetObject(Buffer.from('pdf-bytes'));
-      mockTextractSend.mockResolvedValue({
-        Blocks: [
-          { BlockType: 'PAGE', Text: '' },
-          { BlockType: 'LINE', Text: 'Waiver Notice' },
-          { BlockType: 'LINE', Text: 'Airline: AA' },
-          { BlockType: 'LINE', Text: 'Effective: 2024-01-15' },
-          { BlockType: 'WORD', Text: 'ignored' },
-        ],
+      mockPdfParse.mockResolvedValue({
+        text: 'Waiver Notice\nAirline: AA\nEffective: 2024-01-15',
+        numpages: 1,
       });
 
       const result = await handler(makeEvent({ sourceType: 'pdf', s3Key: 'raw/pdf/record-001', recordId: 'record-001' }));
@@ -77,14 +70,11 @@ describe('normalisation handler', () => {
         sourceS3Key: 'raw/pdf/record-001',
         sourceType: 'pdf',
         recordId: 'record-001',
+        sourceUrl: '',
       });
 
-      // Textract called
-      expect(mockTextractSend).toHaveBeenCalledTimes(1);
-      const textractCmd = mockTextractSend.mock.calls[0][0];
-      expect(textractCmd.input).toEqual({
-        Document: { S3Object: { Bucket: 'test-bucket', Name: 'raw/pdf/record-001' } },
-      });
+      // pdf-parse called
+      expect(mockPdfParse).toHaveBeenCalledTimes(1);
 
       // PutObject called with normalized text
       const putCall = mockS3Send.mock.calls.find(
@@ -101,9 +91,9 @@ describe('normalisation handler', () => {
       );
     });
 
-    it('should handle Textract returning empty blocks', async () => {
+    it('should handle pdf-parse returning empty text', async () => {
       mockGetObject(Buffer.from('pdf-bytes'));
-      mockTextractSend.mockResolvedValue({ Blocks: [] });
+      mockPdfParse.mockResolvedValue({ text: '', numpages: 1 });
 
       await expect(handler(makeEvent({ sourceType: 'pdf' }))).rejects.toThrow('empty text');
 
@@ -162,6 +152,7 @@ describe('normalisation handler', () => {
         sourceS3Key: 'raw/email/msg-001',
         sourceType: 'email',
         recordId: 'rec-email',
+        sourceUrl: '',
       });
 
       expect(mockSimpleParser).toHaveBeenCalledTimes(1);

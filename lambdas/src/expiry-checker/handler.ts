@@ -1,6 +1,7 @@
 import { ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { docClient, TableNames } from '../shared/db';
 import { getRule } from '../shared/rules';
+import * as cache from '../shared/cache';
 
 /**
  * Expiry Checker Lambda — triggered daily by EventBridge.
@@ -19,13 +20,13 @@ export async function handler(): Promise<void> {
 
     const scanResult = await docClient.send(new ScanCommand({
       TableName: TableNames.waivers,
-      FilterExpression: '#status = :active AND #expDate < :today',
+      FilterExpression: '#status <> :expired AND #expDate < :today',
       ExpressionAttributeNames: {
         '#status': 'status',
         '#expDate': 'expiration_date',
       },
       ExpressionAttributeValues: {
-        ':active': 'active',
+        ':expired': 'expired',
         ':today': today,
       },
     }));
@@ -57,6 +58,7 @@ export async function handler(): Promise<void> {
     }
 
     console.log(`Expiry checker complete: ${updatedCount} waiver(s) transitioned to expired`);
+    cache.invalidate('dashboard:metrics');
   } catch (error) {
     console.error('Expiry checker failed:', error);
   }

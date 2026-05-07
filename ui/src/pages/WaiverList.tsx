@@ -59,10 +59,21 @@ export function WaiverList() {
     }
   }, [searchParams]);
   const [airlineFilter, setAirlineFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? 'active');
   const [dateFrom, setDateFrom] = useState(searchParams.get('dateFrom') ?? '');
   const [dateTo, setDateTo] = useState(searchParams.get('dateTo') ?? '');
   const [showArchived, setShowArchived] = useState(false);
+
+  const handleShowArchivedToggle = (checked: boolean) => {
+    setShowArchived(checked);
+    if (checked) {
+      setStatusFilter('');
+      setPage(1);
+    } else {
+      setStatusFilter('active');
+      setPage(1);
+    }
+  };
 
   /* Fetch schema */
   const { data: schemaData } = useQuery<FieldSchemaResponse>({
@@ -91,9 +102,10 @@ export function WaiverList() {
 
   const pagination = data?.pagination;
   const allWaivers = data?.data ?? [];
-  const waivers = allWaivers.filter((w) =>
-    showArchived || statusFilter === 'archived' ? true : w.status !== 'archived',
-  );
+  const waivers = allWaivers.filter((w) => {
+    if (!showArchived && statusFilter !== 'archived' && w.status === 'archived') return false;
+    return true;
+  });
 
   const archiveMutation = useMutation({
     mutationFn: (id: string) => apiPost(`/v1/waivers/${id}/archive`, {}),
@@ -129,12 +141,12 @@ export function WaiverList() {
       <h1 style={S.heading}>Waivers</h1>
 
       {/* Show archived toggle */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 12 }}>
         <label style={{ fontSize: 13, color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
           <input
             type="checkbox"
             checked={showArchived}
-            onChange={(e) => setShowArchived(e.target.checked)}
+            onChange={(e) => handleShowArchivedToggle(e.target.checked)}
           />
           Show archived waivers
         </label>
