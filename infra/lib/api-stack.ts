@@ -209,8 +209,8 @@ export class ApiStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'handler',
       entry: path.join(__dirname, '../../lambdas/src/web-fetcher/api-handler.ts'),
-      memorySize: 1024,
-      timeout: cdk.Duration.seconds(60),
+      memorySize: 768,
+      timeout: cdk.Duration.seconds(45),
       environment: { INGESTION_BUCKET: props.ingestionBucket.bucketName },
       bundling: {
         externalModules: ['@aws-sdk/*'],

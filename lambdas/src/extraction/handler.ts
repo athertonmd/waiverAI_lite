@@ -10,7 +10,7 @@ const ddbClient = new DynamoDBClient({});
 const docClient = DynamoDBDocumentClient.from(ddbClient);
 
 const BUCKET = process.env.INGESTION_BUCKET!;
-const MODEL_ID = process.env.BEDROCK_MODEL_ID ?? 'anthropic.claude-3-7-sonnet-20250219-v1:0';
+const MODEL_ID = process.env.BEDROCK_MODEL_ID ?? 'anthropic.claude-3-5-haiku-20241022-v1:0';
 const CORRECTIONS_TABLE = process.env.CORRECTIONS_TABLE ?? '';
 const SETTINGS_TABLE = process.env.SETTINGS_TABLE ?? '';
 

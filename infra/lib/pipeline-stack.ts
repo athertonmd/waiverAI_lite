@@ -50,7 +50,7 @@ export class PipelineStack extends cdk.Stack {
       handler: 'handler',
       entry: path.join(__dirname, '../../lambdas/src/normalisation/handler.ts'),
       memorySize: 512,
-      timeout: cdk.Duration.seconds(120),
+      timeout: cdk.Duration.seconds(60),
       environment: { INGESTION_BUCKET: props.ingestionBucketName, DLQ_URL: '', AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1' },
       bundling: { externalModules: ['@aws-sdk/*'] },
     });
@@ -60,7 +60,7 @@ export class PipelineStack extends cdk.Stack {
       handler: 'handler',
       entry: path.join(__dirname, '../../lambdas/src/extraction/handler.ts'),
       memorySize: 512,
-      timeout: cdk.Duration.seconds(120),
+      timeout: cdk.Duration.seconds(30),
       environment: { INGESTION_BUCKET: props.ingestionBucketName, CORRECTIONS_TABLE: props.tableNames.corrections, SETTINGS_TABLE: props.tableNames.settings, AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1' },
       bundling: { externalModules: ['@aws-sdk/*'] },
     });
@@ -71,8 +71,8 @@ export class PipelineStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'handler',
       entry: path.join(__dirname, '../../lambdas/src/chromium-renderer/handler.ts'),
-      memorySize: 1600,
-      timeout: cdk.Duration.seconds(90),
+      memorySize: 1024,
+      timeout: cdk.Duration.seconds(60),
       environment: { INGESTION_BUCKET: props.ingestionBucketName, AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1' },
       bundling: {
         externalModules: ['@aws-sdk/*'],
@@ -317,9 +317,9 @@ export class PipelineStack extends cdk.Stack {
     }));
     this.stateMachine.grantStartExecution(lumoPollerFn);
 
-    // EventBridge schedule for Lumo Poller (every 10 minutes)
+    // EventBridge schedule for Lumo Poller (every 30 minutes)
     new events.Rule(this, 'LumoPollerSchedule', {
-      schedule: events.Schedule.rate(cdk.Duration.minutes(10)),
+      schedule: events.Schedule.rate(cdk.Duration.minutes(30)),
       targets: [new events_targets.LambdaFunction(lumoPollerFn)],
     });
 

@@ -264,7 +264,7 @@ async function getActiveWaivers(): Promise<APIGatewayProxyResult> {
   });
 
   const activeResult = json(200, { data: items });
-  cache.set('waivers:active', activeResult, 15_000);
+  cache.set('waivers:active', activeResult, 300_000);
   return activeResult;
 }
 
@@ -759,7 +759,7 @@ async function getDashboardMetrics(): Promise<APIGatewayProxyResult> {
       recentWaivers,
     },
   });
-  cache.set('dashboard:metrics', result, 30_000);
+  cache.set('dashboard:metrics', result, 300_000);
   return result;
 }
 
@@ -774,7 +774,7 @@ async function getThreshold(): Promise<APIGatewayProxyResult> {
 
   const value = result.Item ? parseFloat(result.Item.value as string) : 0.85;
   const resp = json(200, { data: { threshold: value } });
-  cache.set('settings:threshold', resp, 60_000);
+  cache.set('settings:threshold', resp, 600_000);
   return resp;
 }
 

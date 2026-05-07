@@ -32,6 +32,29 @@ export class BaseStack extends cdk.Stack {
           maxAge: 3600,
         },
       ],
+      lifecycleRules: [
+        {
+          id: 'TransitionRawToGlacier',
+          prefix: 'raw/',
+          transitions: [
+            {
+              storageClass: s3.StorageClass.GLACIER,
+              transitionAfter: cdk.Duration.days(90),
+            },
+          ],
+          expiration: cdk.Duration.days(365),
+        },
+        {
+          id: 'DeleteNormalizedFiles',
+          prefix: 'normalized/',
+          expiration: cdk.Duration.days(30),
+        },
+        {
+          id: 'DeleteExtractedFiles',
+          prefix: 'extracted/',
+          expiration: cdk.Duration.days(90),
+        },
+      ],
     });
 
     // SNS alert topic for pipeline failure notifications
